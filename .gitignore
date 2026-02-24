@@ -1,0 +1,68 @@
+# ============================================
+# RPA Novohit - Archivos a ignorar
+# ============================================
+
+# Entornos virtuales y variables de entorno
+.env
+.env.*
+.venv/
+venv/
+ENV/
+
+# Archivos de datos sensibles (estados de cuenta)
+*.xlsx
+*.xls
+*.csv
+!config/template*.xlsx
+
+# Archivos generados por el RPA
+data/output/
+data/processed/
+*.json
+downloads/
+
+# Screenshots de debug
+debug_*.png
+*.png
+!assets/*.png
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Playwright
+.playwright/

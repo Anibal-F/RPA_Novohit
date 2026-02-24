@@ -1,0 +1,14 @@
+# RPA Novohit - Dependencias
+
+# Automatización web
+playwright>=1.40.0
+
+# Manejo de Excel
+openpyxl>=3.1.0
+pandas>=2.0.0
+
+# Utilidades
+python-dotenv>=1.0.0
+
+# Opcional: Para manejo de fechas más robusto
+python-dateutil>=2.8.0
