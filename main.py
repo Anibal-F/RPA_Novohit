@@ -129,7 +129,10 @@ def main():
     try:
         logger.info(f"Iniciando carga de {len(valid_records)} registros...")
         
-        with NovohitLoader(headless=args.headless) as loader:
+        # Pasar config_loader al loader para que obtenga credenciales del Excel (P3/P4)
+        config_loader = transformer.config_loader if hasattr(transformer, 'config_loader') else None
+        
+        with NovohitLoader(headless=args.headless, config_loader=config_loader) as loader:
             # Navegar a operaciones bancarias
             loader.navigate_to_bank_operations()
             
@@ -142,7 +145,7 @@ def main():
                 results = loader.process_records(
                     valid_records,
                     delay=settings.DELAY_BETWEEN_OPERATIONS,
-                    config_loader=transformer.config_loader if hasattr(transformer, 'config_loader') else None
+                    config_loader=config_loader
                 )
             
             # Agregar metadata a resultados

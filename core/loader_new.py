@@ -18,12 +18,13 @@ class NovohitLoader:
     Automatiza la carga de operaciones bancarias en Novohit.
     """
     
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, config_loader=None):
         self.headless = headless
         self.browser = None
         self.context = None
         self.page = None
         self.frame = None  # El iframe donde está el contenido
+        self.config_loader = config_loader  # Para obtener credenciales del Excel
         
     def __enter__(self):
         """Context manager entry."""
@@ -60,14 +61,35 @@ class NovohitLoader:
         """Realiza el login en Novohit."""
         logger.info("Realizando login...")
         
+        # Obtener credenciales: primero del config_loader (Excel), luego de settings (.env)
+        username = None
+        password = None
+        
+        if self.config_loader:
+            username, password = self.config_loader.get_credentials()
+            if username and password:
+                logger.info(f"Usando credenciales del Excel (celdas P3/P4)")
+        
+        # Si no hay credenciales del Excel, usar las de settings
+        if not username:
+            username = settings.NOVOHIT_USERNAME
+            logger.info("Usando credenciales del archivo .env.Novohit")
+        
+        if not password:
+            password = settings.NOVOHIT_PASSWORD
+        
+        # Validar que tenemos credenciales
+        if not username or not password:
+            raise ValueError("No se encontraron credenciales. Configure P3/P4 en el Excel o .env.Novohit")
+        
         self.page.goto(settings.NOVOHIT_URL, wait_until="networkidle")
         
         # Esperar formulario
         self.page.wait_for_selector(settings.NOVOHIT_USER_SELECTOR, state="visible")
         
         # Completar credenciales
-        self.page.fill(settings.NOVOHIT_USER_SELECTOR, settings.NOVOHIT_USERNAME)
-        self.page.fill(settings.NOVOHIT_PASS_SELECTOR, settings.NOVOHIT_PASSWORD)
+        self.page.fill(settings.NOVOHIT_USER_SELECTOR, username)
+        self.page.fill(settings.NOVOHIT_PASS_SELECTOR, password)
         
         # Login
         self.page.click(settings.NOVOHIT_LOGIN_SELECTOR)

@@ -631,8 +631,8 @@ class RPAGUI:
             self.log("=" * 50)
             self.log("")
             
-            # Procesar con NovohitLoader
-            with NovohitLoader(headless=False) as loader:
+            # Procesar con NovohitLoader (pasando config_loader para credenciales del Excel P3/P4)
+            with NovohitLoader(headless=False, config_loader=config_loader) as loader:
                 self.log("✓ Sesión iniciada correctamente", 'success')
                 self.log("")
                 
