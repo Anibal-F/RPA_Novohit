@@ -153,8 +153,11 @@ class NovohitTransformer:
         
         # Extraer tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
         tipo_transaccion = ''
-        if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+        categoria = mapping.get('categoria', '')
+        logger.info(f"  [DEBUG] Concepto: {concepto[:50]}, operacion_id: {operacion_id}, categoria: {categoria}")
+        if operacion_id == '6' or categoria == 'deposito':
             tipo_transaccion = self._extract_tipo_transaccion(concepto)
+            logger.info(f"  [DEBUG] Tipo transaccion detectado: {tipo_transaccion} para banco: {self.bank_name}")
         
         # Generar observaciones y clave según configuración
         if self.config_loader:
@@ -361,8 +364,10 @@ class NovohitTransformer:
                 prefix = "DOC"
         
         # Si es DEPOSITO y tenemos tipo de transacción, agregar sufijo al prefijo
+        logger.info(f"  [DEBUG] Generando documento: operacion={operacion_nombre}, prefix={prefix}, tipo_transaccion={tipo_transaccion}")
         if operacion_nombre.upper() == 'DEPOSITO' and tipo_transaccion:
             tipo_suffix = self._get_tipo_transaccion_suffix(tipo_transaccion)
+            logger.info(f"  [DEBUG] Sufijo generado: {tipo_suffix}")
             if tipo_suffix:
                 prefix = f"{prefix}{tipo_suffix}"
         
