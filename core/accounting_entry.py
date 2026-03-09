@@ -122,15 +122,16 @@ class AccountingEntryHandler:
         operacion_nombre = self._get_operacion_nombre(operacion_id)
         logger.info(f"  [DEBUG] Buscando cuenta contable para: {operacion_nombre} (ID: {operacion_id})")
         
-        # Si es DEPOSITO (ID 6), buscar cuenta por unidad de negocio
+        # Si es DEPOSITO (ID 6), buscar cuenta por unidad de negocio y tipo de transacción
         if operacion_id == '6' or record.get('categoria') == 'deposito':
             unidad_id = record.get('unidad_negocio_id') or config_loader.get_unidad_negocio_id()
-            logger.info(f"  [DEBUG] Es depósito. Unidad de negocio: {unidad_id}")
+            tipo_transaccion = record.get('tipo_transaccion', '')
+            logger.info(f"  [DEBUG] Es depósito. Unidad={unidad_id}, Tipo={tipo_transaccion}")
             if unidad_id:
-                # Intentar obtener cuenta del Excel
-                cuenta = config_loader.get_cuenta_deposito_for_unidad(unidad_id)
+                # Intentar obtener cuenta del Excel según tipo de transacción
+                cuenta = config_loader.get_cuenta_deposito_for_unidad(unidad_id, tipo_transaccion)
                 if cuenta:
-                    logger.info(f"  [DEBUG] Cuenta de depósito encontrada para unidad {unidad_id}: {cuenta}")
+                    logger.info(f"  [DEBUG] Cuenta de depósito encontrada: {cuenta}")
                     return cuenta
                 
                 # FALLBACK: Usar cuentas por defecto según unidad
@@ -140,10 +141,10 @@ class AccountingEntryHandler:
                 }
                 if unidad_id in fallback_cuentas:
                     cuenta_fallback = fallback_cuentas[unidad_id]
-                    logger.info(f"  [DEBUG] Usando cuenta fallback para unidad {unidad_id}: {cuenta_fallback}")
+                    logger.info(f"  [DEBUG] Usando cuenta fallback: {cuenta_fallback}")
                     return cuenta_fallback
                 
-                logger.warning(f"  [DEBUG] No hay cuenta de depósito configurada ni fallback para unidad {unidad_id}")
+                logger.warning(f"  [DEBUG] No hay cuenta configurada para unidad {unidad_id}")
         
         # Buscar en configuración general (para comisiones, iva, o fallback de depositos)
         config = config_loader.get_operation_config(operacion_nombre)

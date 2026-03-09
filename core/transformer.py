@@ -214,7 +214,8 @@ class NovohitTransformer:
             'monto': monto,
             'categoria': mapping['categoria'],
             'fila_excel': record.get('fila_excel', 0),
-            'unidad_negocio_id': unidad_negocio_id
+            'unidad_negocio_id': unidad_negocio_id,
+            'tipo_transaccion': tipo_transaccion  # Para seleccionar cuenta contable correcta
         }
         
         logger.info(f"Transformado: {notes[:50]} - Doc: {no_document} (${monto:.2f}) [{current_seq}/{total_count}]")

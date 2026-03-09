@@ -268,92 +268,105 @@ class ExcelConfigLoader:
     
     def _load_cuentas_deposito_por_unidad(self):
         """
-        Lee el mapeo de cuentas de depósito por unidad de negocio.
-        Busca columnas por nombre: ID, Unidad de Negocio, Cuenta Depósitos
+        Lee el mapeo de cuentas de depósito por unidad de negocio y tipo de transacción.
+        
+        Nueva estructura:
+        - Columna M: Unidad de Negocio (celda M1 tiene el ID seleccionado)
+        - Columna N: Cuentas para TDD (Tarjeta Débito) - índice 13
+        - Columna O: Cuentas para TDC (Tarjeta Crédito) - índice 14  
+        - Columna P: Cuentas para TDCA (American Express) - índice 15
+        
+        Filas 4-5 (índices 3-4) contienen las cuentas por unidad de negocio
         """
         self.cuentas_deposito_por_unidad = {}
+        self.cuentas_por_tipo = {
+            'TDD': {},   # Columna N - índice 13
+            'TDC': {},   # Columna O - índice 14
+            'TDCA': {}   # Columna P - índice 15
+        }
+        
         try:
-            # Leer la hoja con header para poder buscar por nombre de columna
-            df = pd.read_excel(self.file_path, sheet_name='Configuración')
+            # Leer la hoja con header=None para acceder por índice de columna
+            df = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
             
-            logger.info(f"[DEBUG] Columnas encontradas en Configuración: {list(df.columns)}")
+            logger.info(f"[DEBUG] Cargando cuentas de depósito. Shape: {df.shape}")
             
-            # Buscar columnas por nombre - buscar en TODAS las columnas del DataFrame
-            logger.info(f"[DEBUG] Buscando columnas de depósito...")
-            
-            # Buscar columna ID (puede haber dos: una para operaciones, otra para unidades)
-            # La segunda columna ID (la de unidades) suele estar después de "Cuentas" o "Bancos"
-            id_cols = [c for c in df.columns if 'ID' in str(c).upper()]
-            logger.info(f"[DEBUG] Columnas ID encontradas: {id_cols}")
-            
-            # Buscar columna de cuenta de depósitos
-            cuenta_col = None
-            for c in df.columns:
-                col_upper = str(c).upper()
-                if 'CUENTA' in col_upper and ('DEPOSITO' in col_upper or 'DEPÓSITO' in col_upper):
-                    cuenta_col = c
-                    break
-            
-            # Si no encontramos la específica, buscar "Cuenta Depósitos" o similar
-            if not cuenta_col:
-                cuenta_col = self._find_column(df, ['CUENTA DEPOSITOS', 'CUENTA DEPÓSITOS', 'CUENTAS DEPOSITO'])
-            
-            # Buscar columna ID que esté cerca de la cuenta de depósitos
-            id_col = None
-            if cuenta_col:
-                # Encontrar el índice de la columna de cuenta
-                cuenta_idx = list(df.columns).index(cuenta_col)
-                # Buscar columna ID a la izquierda (normalmente 1-2 columnas antes)
-                for i in range(cuenta_idx - 1, max(-1, cuenta_idx - 5), -1):
-                    if i >= 0 and 'ID' in str(df.columns[i]).upper():
-                        id_col = df.columns[i]
-                        break
-            
-            # Si no encontramos, usar la segunda columna ID (la de unidades)
-            if not id_col and len(id_cols) >= 2:
-                id_col = id_cols[1]  # Segunda columna ID (la primera suele ser para operaciones)
-            
-            logger.info(f"[DEBUG] Columnas de depósito: ID={id_col}, Cuenta={cuenta_col}")
-            
-            if not id_col or not cuenta_col:
-                logger.warning("[DEBUG] No se encontraron columnas de ID o Cuenta Depósitos")
+            # Verificar que tenemos suficientes columnas (M=12, N=13, O=14, P=15)
+            if len(df.columns) < 16:
+                logger.warning(f"[DEBUG] No hay suficientes columnas. Se necesitan al menos 16, hay {len(df.columns)}")
                 return
             
-            # Procesar filas
-            for idx, row in df.iterrows():
-                id_val = row.get(id_col)
-                cuenta_val = row.get(cuenta_col)
-                
-                # Convertir a string y limpiar
-                id_str = str(id_val).strip() if pd.notna(id_val) else ''
-                cuenta_str = str(cuenta_val).strip() if pd.notna(cuenta_val) else ''
-                
-                # Solo mostrar debug para filas que tienen datos
-                if id_str and id_str.lower() != 'nan':
-                    logger.info(f"[DEBUG] Fila {idx}: ID='{id_str}', Cuenta='{cuenta_str}'")
-                
-                # Validar que tenemos datos válidos
-                if id_str and id_str.lower() != 'nan' and cuenta_str and cuenta_str.lower() != 'nan':
-                    # Extraer solo el número de ID
-                    import re
-                    match = re.search(r'\d+', id_str)
-                    if match:
-                        unidad_id = match.group()
-                        self.cuentas_deposito_por_unidad[unidad_id] = cuenta_str
-                        logger.info(f"Cuenta depósito cargada: Unidad {unidad_id} -> {cuenta_str}")
+            # Buscar ID de unidad seleccionado en celda M1 (fila 0, columna 12)
+            unidad_seleccionada = None
+            if len(df) > 0 and len(df.columns) > 12:
+                m1_valor = df.iloc[0, 12]  # M1 = fila 0, columna 12
+                m1_str = str(m1_valor).strip() if pd.notna(m1_valor) else ''
+                import re
+                match = re.search(r'\d+', m1_str)
+                if match:
+                    unidad_seleccionada = match.group()
+                    logger.info(f"[DEBUG] Unidad de negocio seleccionada en M1: {unidad_seleccionada}")
             
-            if self.cuentas_deposito_por_unidad:
-                logger.info(f"Cuentas de depósito por unidad cargadas: {len(self.cuentas_deposito_por_unidad)}")
-                for uid, cuenta in self.cuentas_deposito_por_unidad.items():
-                    logger.info(f"  - Unidad {uid}: {cuenta}")
-            else:
-                logger.warning("No se encontraron cuentas de depósito por unidad de negocio")
+            # Leer las filas de unidades (filas 3-4 en Excel = índices 3-4 en DataFrame)
+            # Fila 4: Unidad 2 (Parque Observatoric)
+            # Fila 5: Unidad 3 (Club Playa)
+            filas_unidades = {
+                3: '2',  # Fila 4 en Excel
+                4: '3'   # Fila 5 en Excel
+            }
+            
+            for fila_idx, unidad_id in filas_unidades.items():
+                if fila_idx >= len(df):
+                    continue
+                    
+                # Leer columna N (13) - TDD
+                tdd_val = df.iloc[fila_idx, 13] if len(df.columns) > 13 else None
+                # Leer columna O (14) - TDC
+                tdc_val = df.iloc[fila_idx, 14] if len(df.columns) > 14 else None
+                # Leer columna P (15) - TDCA
+                tdca_val = df.iloc[fila_idx, 15] if len(df.columns) > 15 else None
                 
+                # Extraer números de cuenta del texto
+                def extraer_cuenta(valor):
+                    if pd.isna(valor):
+                        return None
+                    val_str = str(valor).strip()
+                    if val_str and val_str.lower() != 'nan':
+                        # Buscar patrón de cuenta contable (números con puntos)
+                        import re
+                        match = re.search(r'(\d{4,}(?:\.\d+)?)', val_str)
+                        if match:
+                            return match.group(1)
+                    return None
+                
+                tdd_cuenta = extraer_cuenta(tdd_val)
+                tdc_cuenta = extraer_cuenta(tdc_val)
+                tdca_cuenta = extraer_cuenta(tdca_val)
+                
+                if tdd_cuenta:
+                    self.cuentas_por_tipo['TDD'][unidad_id] = tdd_cuenta
+                    logger.info(f"[DEBUG] Cuenta TDD para unidad {unidad_id}: {tdd_cuenta}")
+                
+                if tdc_cuenta:
+                    self.cuentas_por_tipo['TDC'][unidad_id] = tdc_cuenta
+                    logger.info(f"[DEBUG] Cuenta TDC para unidad {unidad_id}: {tdc_cuenta}")
+                
+                if tdca_cuenta:
+                    self.cuentas_por_tipo['TDCA'][unidad_id] = tdca_cuenta
+                    logger.info(f"[DEBUG] Cuenta TDCA para unidad {unidad_id}: {tdca_cuenta}")
+            
+            logger.info(f"Cuentas de depósito cargadas: TDD={len(self.cuentas_por_tipo['TDD'])}, TDC={len(self.cuentas_por_tipo['TDC'])}, TDCA={len(self.cuentas_por_tipo['TDCA'])}")
+            
+            # También guardar en el formato anterior para compatibilidad
+            if unidad_seleccionada:
+                for tipo in ['TDD', 'TDC', 'TDCA']:
+                    if unidad_seleccionada in self.cuentas_por_tipo[tipo]:
+                        self.cuentas_deposito_por_unidad[unidad_id] = self.cuentas_por_tipo[tipo][unidad_seleccionada]
+                        
         except Exception as e:
             logger.warning(f"Error cargando cuentas de depósito por unidad: {e}")
             import traceback
             logger.warning(traceback.format_exc())
-            self.cuentas_deposito_por_unidad = {}
     
     def get_bank_name(self) -> Optional[str]:
         """
@@ -382,18 +395,47 @@ class ExcelConfigLoader:
         """
         return self.unidad_negocio_id
     
-    def get_cuenta_deposito_for_unidad(self, unidad_id: str) -> Optional[str]:
+    def get_cuenta_deposito_for_unidad(self, unidad_id: str, tipo_transaccion: str = '') -> Optional[str]:
         """
-        Obtiene la cuenta contable de depósitos para una unidad de negocio específica.
+        Obtiene la cuenta contable de depósitos para una unidad de negocio y tipo de transacción.
         
         Args:
             unidad_id: ID de la unidad de negocio
+            tipo_transaccion: Tipo de transacción (TDD, TDC, TDCA)
             
         Returns:
             Cuenta contable de depósitos o None si no está configurada
         """
+        # Normalizar tipo de transacción
+        tipo_upper = tipo_transaccion.upper().strip() if tipo_transaccion else ''
+        
+        # Mapeo de tipos
+        tipo_map = {
+            'TDD': 'TDD',
+            'TDC': 'TDC',
+            'TDC AMEX': 'TDCA',
+            'TDCA': 'TDCA'
+        }
+        
+        tipo_key = tipo_map.get(tipo_upper, 'TDD')  # Default a TDD si no se reconoce
+        
+        logger.info(f"[DEBUG] Buscando cuenta para unidad={unidad_id}, tipo={tipo_key}")
+        
+        # Buscar en el nuevo formato (cuentas por tipo)
+        if hasattr(self, 'cuentas_por_tipo') and tipo_key in self.cuentas_por_tipo:
+            cuenta = self.cuentas_por_tipo[tipo_key].get(str(unidad_id))
+            if cuenta:
+                logger.info(f"[DEBUG] Cuenta encontrada: {cuenta} (tipo={tipo_key})")
+                return cuenta
+        
+        # Fallback al formato anterior
         if hasattr(self, 'cuentas_deposito_por_unidad') and unidad_id:
-            return self.cuentas_deposito_por_unidad.get(str(unidad_id))
+            cuenta = self.cuentas_deposito_por_unidad.get(str(unidad_id))
+            if cuenta:
+                logger.info(f"[DEBUG] Cuenta encontrada (formato legacy): {cuenta}")
+                return cuenta
+        
+        logger.warning(f"[DEBUG] No se encontró cuenta para unidad={unidad_id}, tipo={tipo_key}")
         return None
     
     def get_operation_config(self, operacion: str) -> Optional[Dict]:
