@@ -127,12 +127,23 @@ class AccountingEntryHandler:
             unidad_id = record.get('unidad_negocio_id') or config_loader.get_unidad_negocio_id()
             logger.info(f"  [DEBUG] Es depósito. Unidad de negocio: {unidad_id}")
             if unidad_id:
+                # Intentar obtener cuenta del Excel
                 cuenta = config_loader.get_cuenta_deposito_for_unidad(unidad_id)
                 if cuenta:
                     logger.info(f"  [DEBUG] Cuenta de depósito encontrada para unidad {unidad_id}: {cuenta}")
                     return cuenta
-                else:
-                    logger.warning(f"  [DEBUG] No hay cuenta de depósito configurada para unidad {unidad_id}")
+                
+                # FALLBACK: Usar cuentas por defecto según unidad
+                fallback_cuentas = {
+                    '2': '11012001.002',
+                    '3': '11012002.002'
+                }
+                if unidad_id in fallback_cuentas:
+                    cuenta_fallback = fallback_cuentas[unidad_id]
+                    logger.info(f"  [DEBUG] Usando cuenta fallback para unidad {unidad_id}: {cuenta_fallback}")
+                    return cuenta_fallback
+                
+                logger.warning(f"  [DEBUG] No hay cuenta de depósito configurada ni fallback para unidad {unidad_id}")
         
         # Buscar en configuración general (para comisiones, iva, o fallback de depositos)
         config = config_loader.get_operation_config(operacion_nombre)
