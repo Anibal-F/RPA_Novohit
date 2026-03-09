@@ -719,38 +719,65 @@ class NovohitLoader:
                     time.sleep(0.8)  # Esperar a que el calendario se renderice
                     
                     # Extraer día, mes y año de la fecha (DD/MM/YYYY)
-                    dia_str = fecha.split('/')[0].lstrip('0')  # Eliminar ceros a la izquierda
-                    mes_str = fecha.split('/')[1].lstrip('0')
-                    anio_str = fecha.split('/')[2]
+                    dia = int(fecha.split('/')[0])  # 1-31
+                    mes = int(fecha.split('/')[1])   # 1-12
+                    anio = int(fecha.split('/')[2])  # 2026
                     
-                    # Intentar hacer clic en el día específico del calendario
-                    # Selector basado en el HTML: td con data-handler="selectDay" que contenga el número
+                    # El datepicker usa índices 0-11 para los meses (enero=0, febrero=1, marzo=2...)
+                    mes_index = mes - 1
+                    
                     day_clicked = False
                     try:
-                        # Buscar el día en el calendario visible
-                        # Los días tienen estructura: <td data-handler="selectDay" data-event="click" ...><a href="#">5</a></td>
-                        day_locator = self.frame.locator(f'td[data-handler="selectDay"] a:has-text("{dia_str}")').first
+                        # Paso 1: Seleccionar el mes correcto
+                        month_select = self.frame.locator('select.ui-datepicker-month').first
+                        if month_select.count() > 0 and month_select.is_visible():
+                            month_select.select_option(str(mes_index))
+                            logger.info(f"    Mes seleccionado: {mes} (index {mes_index})")
+                            time.sleep(0.3)
                         
-                        # Verificar si el día está visible en el calendario actual
+                        # Paso 2: Seleccionar el año correcto
+                        year_select = self.frame.locator('select.ui-datepicker-year').first
+                        if year_select.count() > 0 and year_select.is_visible():
+                            year_select.select_option(str(anio))
+                            logger.info(f"    Año seleccionado: {anio}")
+                            time.sleep(0.5)  # Esperar a que el calendario se actualice
+                        
+                        # Paso 3: Hacer clic en el día correcto
+                        # Buscar td que tenga data-month="{mes_index}" y data-year="{anio}" con el número correcto
+                        # El día debe estar dentro de un <a> o ser el texto del <td>
+                        dia_str = str(dia)
+                        mes_str = str(mes_index)
+                        
+                        # Buscar el día específico con los atributos correctos
+                        day_locator = self.frame.locator(
+                            f'td[data-handler="selectDay"][data-month="{mes_str}"][data-year="{anio}"] a:has-text("{dia_str}")'
+                        ).first
+                        
                         if day_locator.count() > 0 and day_locator.is_visible():
                             day_locator.click()
-                            logger.info(f"    Dia {dia_str} seleccionado en el calendario")
+                            logger.info(f"    Dia {dia_str}/{mes}/{anio} seleccionado correctamente")
                             day_clicked = True
                             time.sleep(0.3)
                         else:
-                            # Intentar buscar en los td directamente (algunos calendarios no usan <a>)
-                            day_cells = self.frame.locator(f'td[data-handler="selectDay"]').all()
+                            # Fallback: buscar en los td directamente sin el <a>
+                            day_cells = self.frame.locator(
+                                f'td[data-handler="selectDay"][data-month="{mes_str}"][data-year="{anio}"]'
+                            ).all()
                             for cell in day_cells:
                                 if cell.is_visible():
                                     text = cell.inner_text().strip()
                                     if text == dia_str:
                                         cell.click()
-                                        logger.info(f"    Dia {dia_str} seleccionado en celda")
+                                        logger.info(f"    Dia {dia_str}/{mes}/{anio} seleccionado en celda")
                                         day_clicked = True
                                         time.sleep(0.3)
                                         break
+                        
+                        if not day_clicked:
+                            logger.warning(f"    No se encontro el dia {dia_str} para {mes}/{anio}")
+                            
                     except Exception as click_err:
-                        logger.warning(f"    No se pudo hacer clic en el dia: {click_err}")
+                        logger.warning(f"    Error seleccionando fecha en calendario: {click_err}")
                     
                     # Si no se pudo hacer clic en el día, usar JavaScript como fallback
                     if not day_clicked:
