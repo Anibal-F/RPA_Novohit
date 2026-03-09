@@ -193,6 +193,11 @@ class NovohitTransformer:
             no_document = self._generate_document_number(record, index, doc_counter)
         
         # Construir registro para Novohit
+        # Obtener unidad de negocio del config_loader si está disponible
+        unidad_negocio_id = None
+        if self.config_loader:
+            unidad_negocio_id = self.config_loader.get_unidad_negocio_id()
+        
         novohit_record = {
             # Campos del formulario
             'id_bnk_account': self.account_id,
@@ -208,7 +213,8 @@ class NovohitTransformer:
             'referencia': record.get('referencia', ''),
             'monto': monto,
             'categoria': mapping['categoria'],
-            'fila_excel': record.get('fila_excel', 0)
+            'fila_excel': record.get('fila_excel', 0),
+            'unidad_negocio_id': unidad_negocio_id
         }
         
         logger.info(f"Transformado: {notes[:50]} - Doc: {no_document} (${monto:.2f}) [{current_seq}/{total_count}]")

@@ -122,7 +122,19 @@ class AccountingEntryHandler:
         operacion_nombre = self._get_operacion_nombre(operacion_id)
         logger.info(f"  [DEBUG] Buscando cuenta contable para: {operacion_nombre} (ID: {operacion_id})")
         
-        # Buscar en configuración
+        # Si es DEPOSITO (ID 6), buscar cuenta por unidad de negocio
+        if operacion_id == '6' or record.get('categoria') == 'deposito':
+            unidad_id = record.get('unidad_negocio_id') or config_loader.get_unidad_negocio_id()
+            logger.info(f"  [DEBUG] Es depósito. Unidad de negocio: {unidad_id}")
+            if unidad_id:
+                cuenta = config_loader.get_cuenta_deposito_for_unidad(unidad_id)
+                if cuenta:
+                    logger.info(f"  [DEBUG] Cuenta de depósito encontrada para unidad {unidad_id}: {cuenta}")
+                    return cuenta
+                else:
+                    logger.warning(f"  [DEBUG] No hay cuenta de depósito configurada para unidad {unidad_id}")
+        
+        # Buscar en configuración general (para comisiones, iva, o fallback de depositos)
         config = config_loader.get_operation_config(operacion_nombre)
         if config:
             logger.info(f"  [DEBUG] Config encontrada: {config}")
