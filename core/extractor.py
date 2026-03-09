@@ -265,28 +265,46 @@ class BankStatementExtractor:
         if pd.isna(date_value):
             return ""
         
+        original_value = date_value
+        
         # Si es número (serial de Excel), convertir a datetime
         if isinstance(date_value, (int, float)):
             try:
-                # Excel cuenta días desde 1899-12-30 (con un ajuste por el año bisiesto 1900)
+                # Excel cuenta días desde 1899-12-30
                 from datetime import timedelta
                 excel_epoch = datetime(1899, 12, 30)
                 dt = excel_epoch + timedelta(days=int(date_value))
-                return dt.strftime("%d/%m/%Y")
-            except:
+                result = dt.strftime("%d/%m/%Y")
+                logger.info(f"[DEBUG] Fecha serial Excel: {date_value} -> {result}")
+                return result
+            except Exception as e:
+                logger.warning(f"[DEBUG] Error parseando fecha serial: {date_value}, error: {e}")
                 return str(date_value)
         
         if isinstance(date_value, datetime):
-            return date_value.strftime("%d/%m/%Y")
+            result = date_value.strftime("%d/%m/%Y")
+            logger.info(f"[DEBUG] Fecha datetime: {original_value} -> {result}")
+            return result
         elif isinstance(date_value, str):
             # Intentar varios formatos
-            formats = ["%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%Y-%m-%d", "%m/%d/%Y"]
-            for fmt in formats:
+            formats = [
+                ("%d/%m/%Y", "DD/MM/YYYY"),
+                ("%d/%m/%y", "DD/MM/YY"),  # Formato corto: 09/03/26
+                ("%d-%m-%Y", "DD-MM-YYYY"),
+                ("%d-%m-%y", "DD-MM-YY"),
+                ("%Y/%m/%d", "YYYY/MM/DD"),
+                ("%Y-%m-%d", "YYYY-MM-DD"),
+                ("%m/%d/%Y", "MM/DD/YYYY")
+            ]
+            for fmt, fmt_name in formats:
                 try:
                     dt = datetime.strptime(date_value.strip(), fmt)
-                    return dt.strftime("%d/%m/%Y")
+                    result = dt.strftime("%d/%m/%Y")
+                    logger.info(f"[DEBUG] Fecha string ({fmt_name}): '{original_value}' -> {result}")
+                    return result
                 except:
                     continue
+            logger.warning(f"[DEBUG] No se pudo parsear fecha: '{original_value}'")
             return date_value
         return str(date_value)
     

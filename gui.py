@@ -616,6 +616,7 @@ class RPAGUI:
             self.log(f"✓ Registros válidos: {len(valid_records)}")
             self.log(f"✓ Comisiones: {processing_summary['total_comisiones']} registros, ${processing_summary['monto_comisiones']:,.2f}")
             self.log(f"✓ IVA: {processing_summary['total_iva']} registros, ${processing_summary['monto_iva']:,.2f}")
+            self.log(f"✓ Depósitos: {processing_summary['total_depositos']} registros, ${processing_summary['monto_depositos']:,.2f}")
             self.log("")
             
             self.update_status("Cargando en Novohit...", self.primary_color)

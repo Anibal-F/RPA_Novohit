@@ -426,16 +426,20 @@ class NovohitTransformer:
         # Contar por categoría
         comisiones = [r for r in records if r.get('categoria') == 'comision']
         ivas = [r for r in records if r.get('categoria') == 'iva']
+        depositos = [r for r in records if r.get('categoria') == 'deposito']
         
         total_comisiones = sum(float(r.get('monto', 0)) for r in comisiones)
         total_iva = sum(float(r.get('monto', 0)) for r in ivas)
+        total_depositos = sum(float(r.get('monto', 0)) for r in depositos)
         
         return {
             'total_registros': total_registros,
             'total_comisiones': len(comisiones),
             'total_iva': len(ivas),
+            'total_depositos': len(depositos),
             'monto_comisiones': total_comisiones,
             'monto_iva': total_iva,
-            'monto_total': total_comisiones + total_iva,
+            'monto_depositos': total_depositos,
+            'monto_total': total_comisiones + total_iva + total_depositos,
             'banco': self.bank_name
         }

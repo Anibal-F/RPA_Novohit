@@ -295,15 +295,28 @@ def should_process(concepto: str, banco: str = "BBVA", strict_mode: bool = True)
     Returns:
         True si debe procesarse, False si no
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     mapping = get_mapping_by_concept(concepto, banco, strict_mode)
+    
+    # Debug para IVA
+    if 'IVA' in concepto.upper():
+        logger.info(f"[DEBUG] should_process IVA: concepto='{concepto}', mapping={mapping}")
     
     # Si no hay mapeo, no procesar
     if mapping is None:
+        if 'IVA' in concepto.upper():
+            logger.warning(f"[DEBUG] IVA no mapeado: '{concepto}'")
         return False
     
     # Si hay mapeo pero no tiene id_tp_operation (ej: ventas en modo automatico), no procesar
     if mapping.get("id_tp_operation") is None:
+        if 'IVA' in concepto.upper():
+            logger.warning(f"[DEBUG] IVA sin id_tp_operation: '{concepto}', mapping={mapping}")
         return False
     
     # Si hay mapeo con id_tp_operation, procesar
+    if 'IVA' in concepto.upper():
+        logger.info(f"[DEBUG] IVA procesable: '{concepto}', id={mapping.get('id_tp_operation')}")
     return True
