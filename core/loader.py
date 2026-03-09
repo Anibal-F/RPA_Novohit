@@ -716,60 +716,97 @@ class NovohitLoader:
                 if calendar_trigger.count() > 0:
                     calendar_trigger.click()
                     logger.info("    Calendario abierto")
-                    time.sleep(0.5)
+                    time.sleep(0.8)  # Esperar a que el calendario se renderice
                     
-                    # Usar JavaScript para seleccionar la fecha directamente
-                    # Esto es mas confiable que navegar el calendario mes a mes
-                    js_result = self.frame.evaluate(f"""
-                        () => {{
-                            try {{
-                                // Intentar usar el datepicker de jQuery si existe
-                                if (typeof $ !== 'undefined' && $.datepicker) {{
-                                    // Encontrar el input asociado al datepicker
-                                    const inputs = document.querySelectorAll('input[name*="dt_operation"]');
-                                    for (const input of inputs) {{
-                                        if ($(input).datepicker) {{
-                                            $(input).datepicker('setDate', '{fecha}');
-                                            $(input).trigger('change');
-                                            return {{ success: true, method: 'jquery' }};
+                    # Extraer día, mes y año de la fecha (DD/MM/YYYY)
+                    dia_str = fecha.split('/')[0].lstrip('0')  # Eliminar ceros a la izquierda
+                    mes_str = fecha.split('/')[1].lstrip('0')
+                    anio_str = fecha.split('/')[2]
+                    
+                    # Intentar hacer clic en el día específico del calendario
+                    # Selector basado en el HTML: td con data-handler="selectDay" que contenga el número
+                    day_clicked = False
+                    try:
+                        # Buscar el día en el calendario visible
+                        # Los días tienen estructura: <td data-handler="selectDay" data-event="click" ...><a href="#">5</a></td>
+                        day_locator = self.frame.locator(f'td[data-handler="selectDay"] a:has-text("{dia_str}")').first
+                        
+                        # Verificar si el día está visible en el calendario actual
+                        if day_locator.count() > 0 and day_locator.is_visible():
+                            day_locator.click()
+                            logger.info(f"    Dia {dia_str} seleccionado en el calendario")
+                            day_clicked = True
+                            time.sleep(0.3)
+                        else:
+                            # Intentar buscar en los td directamente (algunos calendarios no usan <a>)
+                            day_cells = self.frame.locator(f'td[data-handler="selectDay"]').all()
+                            for cell in day_cells:
+                                if cell.is_visible():
+                                    text = cell.inner_text().strip()
+                                    if text == dia_str:
+                                        cell.click()
+                                        logger.info(f"    Dia {dia_str} seleccionado en celda")
+                                        day_clicked = True
+                                        time.sleep(0.3)
+                                        break
+                    except Exception as click_err:
+                        logger.warning(f"    No se pudo hacer clic en el dia: {click_err}")
+                    
+                    # Si no se pudo hacer clic en el día, usar JavaScript como fallback
+                    if not day_clicked:
+                        logger.info("    Usando metodo JavaScript para establecer fecha...")
+                        js_result = self.frame.evaluate(f"""
+                            () => {{
+                                try {{
+                                    // Intentar usar el datepicker de jQuery si existe
+                                    if (typeof $ !== 'undefined' && $.datepicker) {{
+                                        // Encontrar el input asociado al datepicker
+                                        const inputs = document.querySelectorAll('input[name*="dt_operation"]');
+                                        for (const input of inputs) {{
+                                            if ($(input).datepicker) {{
+                                                $(input).datepicker('setDate', '{fecha}');
+                                                $(input).trigger('change');
+                                                return {{ success: true, method: 'jquery' }};
+                                            }}
                                         }}
                                     }}
+                                    
+                                    // Fallback: establecer valor directo en los campos
+                                    const hiddenInput = document.querySelector('input[name="s_dt_operation"]');
+                                    const calInput = document.querySelector('input[name="s_dt_operation_cal"]');
+                                    
+                                    const parts = '{fecha}'.split('/');
+                                    const fechaISO = parts[2] + '-' + parts[1] + '-' + parts[0];
+                                    
+                                    if (hiddenInput) {{
+                                        hiddenInput.value = fechaISO;
+                                        hiddenInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    }}
+                                    
+                                    if (calInput) {{
+                                        calInput.value = '{fecha}';
+                                        calInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    }}
+                                    
+                                    // Cerrar el datepicker si esta abierto
+                                    const datepickerDiv = document.querySelector('#ui-datepicker-div');
+                                    if (datepickerDiv) {{
+                                        datepickerDiv.style.display = 'none';
+                                    }}
+                                    
+                                    return {{ success: true, method: 'direct' }};
+                                }} catch (e) {{
+                                    return {{ success: false, error: e.message }};
                                 }}
-                                
-                                // Fallback: establecer valor directo en los campos
-                                const hiddenInput = document.querySelector('input[name="s_dt_operation"]');
-                                const calInput = document.querySelector('input[name="s_dt_operation_cal"]');
-                                
-                                const parts = '{fecha}'.split('/');
-                                const fechaISO = parts[2] + '-' + parts[1] + '-' + parts[0];
-                                
-                                if (hiddenInput) {{
-                                    hiddenInput.value = fechaISO;
-                                    hiddenInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                }}
-                                
-                                if (calInput) {{
-                                    calInput.value = '{fecha}';
-                                    calInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                }}
-                                
-                                // Cerrar el datepicker si esta abierto
-                                const datepickerDiv = document.querySelector('#ui-datepicker-div');
-                                if (datepickerDiv) {{
-                                    datepickerDiv.style.display = 'none';
-                                }}
-                                
-                                return {{ success: true, method: 'direct' }};
-                            }} catch (e) {{
-                                return {{ success: false, error: e.message }};
                             }}
-                        }}
-                    """)
-                    
-                    if js_result and js_result.get('success'):
-                        logger.info(f"  Fecha establecida: {fecha} (metodo: {js_result.get('method')})")
+                        """)
+                        
+                        if js_result and js_result.get('success'):
+                            logger.info(f"  Fecha establecida: {fecha} (metodo: {js_result.get('method')})")
+                        else:
+                            logger.warning(f"  No se pudo establecer fecha: {js_result}")
                     else:
-                        logger.warning(f"  No se pudo establecer fecha: {js_result}")
+                        logger.info(f"  Fecha establecida: {fecha} (metodo: click en calendario)")
                     
                     time.sleep(0.3)
                 else:
