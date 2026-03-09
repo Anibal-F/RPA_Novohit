@@ -16,6 +16,7 @@ from core.extractor import BankStatementExtractor
 from core.transformer import NovohitTransformer
 from core.loader import NovohitLoader
 from core.concept_manager import open_concept_manager
+from core.updater import AutoUpdater
 from config import settings
 
 
@@ -95,6 +96,126 @@ class RPAGUI:
         self.log(f"Versión: 1.0")
         self.log("")
         
+        # Verificar actualizaciones en segundo plano
+        self.check_for_updates()
+        
+    def check_for_updates(self):
+        """Verifica actualizaciones disponibles al iniciar la aplicación."""
+        def update_check():
+            try:
+                updater = AutoUpdater()
+                
+                # Verificar si hay actualizaciones
+                result = updater.check_for_updates()
+                
+                if not result['success']:
+                    # No es un error crítico, solo loggear
+                    self.root.after(0, lambda: self.log(f"ℹ️ Actualizaciones: {result['message']}"))
+                    return
+                
+                if result['has_updates']:
+                    self.root.after(0, lambda: self.log(f"📦 {result['message']}"))
+                    if result.get('details'):
+                        self.root.after(0, lambda: self.log(result['details']))
+                    
+                    # Preguntar al usuario si desea actualizar
+                    self.root.after(0, lambda: self.ask_for_update())
+                else:
+                    self.root.after(0, lambda: self.log(f"✅ {result['message']}"))
+                    
+            except Exception as e:
+                # No mostrar errores al usuario, solo loggear
+                self.root.after(0, lambda: self.log(f"⚠️ No se pudo verificar actualizaciones: {str(e)[:50]}"))
+        
+        # Ejecutar en thread separado para no bloquear la UI
+        thread = threading.Thread(target=update_check, daemon=True)
+        thread.start()
+    
+    def ask_for_update(self):
+        """Muestra diálogo preguntando si desea actualizar."""
+        try:
+            response = messagebox.askyesno(
+                "Actualización Disponible",
+                "Hay una nueva versión del RPA disponible.\n\n"
+                "¿Desea actualizar ahora?\n\n"
+                "Nota: La aplicación se reiniciará después de la actualización.",
+                icon='info'
+            )
+            
+            if response:
+                self.apply_update()
+        except:
+            pass
+    
+    def manual_update_check(self):
+        """Verificación manual de actualizaciones iniciada por el usuario."""
+        try:
+            self.log("🔍 Verificando actualizaciones...")
+            self.update_status("Verificando actualizaciones...", self.primary_color)
+            
+            def check():
+                updater = AutoUpdater()
+                result = updater.check_for_updates()
+                
+                if not result['success']:
+                    self.root.after(0, lambda: self.log(f"⚠️ {result['message']}", 'warning'))
+                    self.root.after(0, lambda: self.update_status("Listo", self.bg_color))
+                    return
+                
+                if result['has_updates']:
+                    self.root.after(0, lambda: self.log(f"📦 {result['message']}", 'info'))
+                    self.root.after(0, lambda: self.ask_for_update())
+                else:
+                    self.root.after(0, lambda: self.log(f"✅ {result['message']}", 'success'))
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Sin Actualizaciones", 
+                        "El proyecto está actualizado con la última versión."
+                    ))
+                
+                self.root.after(0, lambda: self.update_status("Listo", self.bg_color))
+            
+            thread = threading.Thread(target=check, daemon=True)
+            thread.start()
+            
+        except Exception as e:
+            self.log(f"❌ Error: {str(e)}", 'error')
+            self.update_status("Error", self.danger_color)
+    
+    def apply_update(self):
+        """Aplica la actualización y reinicia la aplicación."""
+        try:
+            self.log("🔄 Aplicando actualización...")
+            self.update_status("Actualizando...", self.warning_color)
+            
+            updater = AutoUpdater()
+            result = updater.apply_updates()
+            
+            if result['success']:
+                self.log("✅ Actualización completada")
+                self.log("🔄 Reiniciando aplicación...")
+                
+                # Mostrar mensaje y reiniciar
+                messagebox.showinfo(
+                    "Actualización Completada",
+                    "La actualización se aplicó correctamente.\n"
+                    "La aplicación se reiniciará ahora."
+                )
+                
+                # Reiniciar el proceso de Python
+                import sys
+                python = sys.executable
+                os.execl(python, python, *sys.argv)
+            else:
+                self.log(f"❌ Error al actualizar: {result['message']}", 'error')
+                messagebox.showerror(
+                    "Error de Actualización",
+                    f"No se pudo aplicar la actualización:\n{result['message']}"
+                )
+                
+        except Exception as e:
+            self.log(f"❌ Error en actualización: {str(e)}", 'error')
+            messagebox.showerror("Error", f"Error al actualizar: {str(e)}")
+    
     def setup_styles(self):
         """Configurar estilos personalizados"""
         style = ttk.Style()
@@ -284,6 +405,13 @@ class RPAGUI:
             text="⚙️ Gestionar Conceptos",
             command=lambda: open_concept_manager(self.root),
             width=20
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(
+            buttons_frame,
+            text="🔄 Verificar Actualizaciones",
+            command=self.manual_update_check,
+            width=22
         ).pack(side=tk.LEFT)
         
         # ========== LOG ==========
