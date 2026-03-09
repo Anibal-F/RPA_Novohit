@@ -42,12 +42,15 @@ class NovohitTransformer:
                 return config_account
         return self._fallback_account_id
         
-    def transform_record(self, record: Dict) -> Optional[Dict]:
+    def transform_record(self, record: Dict, index: int = 0, doc_counter: Dict = None, type_date_counts: Dict = None) -> Optional[Dict]:
         """
         Transforma un registro bancario a formato Novohit.
         
         Args:
             record: Diccionario con datos del banco
+            index: Índice del registro para generar documento único
+            doc_counter: Contador de documentos por tipo (para seguimiento)
+            type_date_counts: Conteo total de registros por tipo y fecha
             
         Returns:
             Diccionario con datos formateados para Novohit o None si no es válido
@@ -72,24 +75,43 @@ class NovohitTransformer:
         
         # Obtener fecha
         fecha = record.get('fecha', datetime.now().strftime("%d/%m/%Y"))
+        fecha_clean = fecha.replace('/', '')
         
         # Determinar tipo de operación para nomenclatura
-        operacion_nombre = self._get_operacion_nombre(mapping['id_tp_operation'])
+        operacion_id = mapping['id_tp_operation']
+        operacion_nombre = self._get_operacion_nombre(operacion_id)
+        
+        # Crear clave para el contador (tipo + fecha)
+        counter_key = f"{operacion_id}_{fecha_clean}"
+        
+        # Incrementar contador para este tipo/fecha
+        if doc_counter is None:
+            doc_counter = {}
+        if counter_key not in doc_counter:
+            doc_counter[counter_key] = 0
+        doc_counter[counter_key] += 1
+        
+        # Obtener el número secuencial actual y el total
+        current_seq = doc_counter[counter_key]
+        total_count = type_date_counts.get(counter_key, 1) if type_date_counts else 1
         
         # Generar observaciones y clave según configuración
         if self.config_loader:
             notes = self.config_loader.format_observaciones(operacion_nombre, fecha)
-            no_document = self.config_loader.format_clave_documento(operacion_nombre, fecha)
+            # Generar documento con sufijo secuencial (01, 02, etc.)
+            no_document = self._generate_sequential_document(
+                operacion_nombre, fecha, current_seq, total_count
+            )
         else:
             # Fallback a formato anterior
             notes = f"{mapping['descripcion']} - Ref: {record.get('referencia', '')}"
-            no_document = self._generate_document_number(record)
+            no_document = self._generate_document_number(record, index, doc_counter)
         
         # Construir registro para Novohit
         novohit_record = {
             # Campos del formulario
             'id_bnk_account': self.account_id,
-            'id_tp_operation': mapping['id_tp_operation'],
+            'id_tp_operation': operacion_id,
             'dt_operation': fecha,
             'no_document': no_document,
             'mn_operation': f"{monto:.2f}",
@@ -104,7 +126,7 @@ class NovohitTransformer:
             'fila_excel': record.get('fila_excel', 0)
         }
         
-        logger.info(f"Transformado: {notes[:50]} - ${monto:.2f}")
+        logger.info(f"Transformado: {notes[:50]} - Doc: {no_document} (${monto:.2f}) [{current_seq}/{total_count}]")
         
         return novohit_record
     
@@ -120,9 +142,38 @@ class NovohitTransformer:
         """
         transformed = []
         
+        # PASO 1: Contar registros por tipo de operación y fecha
+        # Esto nos permite saber cuántos documentos de cada tipo tenemos
+        type_date_counts = {}
         for record in records:
+            concepto = record.get('concepto', '')
+            fecha = record.get('fecha', '')
+            
+            # Obtener mapeo para determinar el tipo de operación
+            mapping = get_mapping_by_concept(concepto, self.bank_name)
+            if not mapping:
+                continue
+            
+            # Crear clave única por tipo de operación y fecha
+            operacion_id = mapping['id_tp_operation']
+            fecha_clean = fecha.replace('/', '')
+            key = f"{operacion_id}_{fecha_clean}"
+            
+            if key not in type_date_counts:
+                type_date_counts[key] = 0
+            type_date_counts[key] += 1
+        
+        # Log del conteo
+        logger.info("Conteo de registros por tipo y fecha:")
+        for key, count in type_date_counts.items():
+            logger.info(f"  {key}: {count} registros")
+        
+        # PASO 2: Transformar registros con contador secuencial por tipo/fecha
+        doc_counter = {}  # Contador por clave (tipo + fecha)
+        
+        for idx, record in enumerate(records):
             try:
-                novohit_record = self.transform_record(record)
+                novohit_record = self.transform_record(record, idx, doc_counter, type_date_counts)
                 if novohit_record:
                     transformed.append(novohit_record)
             except Exception as e:
@@ -157,18 +208,80 @@ class NovohitTransformer:
         }
         return operaciones.get(id_tp_operation, 'OPERACION')
     
-    def _generate_document_number(self, record: Dict) -> str:
+    def _generate_document_number(self, record: Dict, index: int = 0, doc_counter: Dict = None) -> str:
         """
-        Genera un número de documento único para el registro.
+        Genera un número de documento único para el registro (fallback).
         
-        Formato: [BANCO]-[FECHA]-[SECUENCIA]
+        Formato: [PREFIX]-[FECHA]-[SECUENCIA_UNICA]
         """
         fecha = record.get('fecha', datetime.now().strftime("%d%m%Y"))
         fecha_clean = fecha.replace("/", "")
-        banco = record.get('banco', 'BNK')[:3]
-        referencia = str(record.get('referencia', ''))[-4:]  # Últimos 4 dígitos
         
-        return f"{banco}-{fecha_clean}-{referencia}"
+        # Determinar prefijo según tipo de operación
+        concepto = record.get('concepto', '').lower()
+        if 'iva' in concepto:
+            prefix = "IVA"
+        elif 'comision' in concepto:
+            prefix = "COM"
+        else:
+            prefix = record.get('banco', 'BNK')[:3].upper()
+        
+        # Generar secuencia única usando timestamp + índice
+        import time
+        timestamp = int(time.time()) % 10000  # Últimos 4 dígitos del timestamp
+        unique_seq = f"{timestamp:04d}-{index+1:02d}"
+        
+        # Alternativa: usar contador por tipo si está disponible
+        if doc_counter is not None:
+            if prefix not in doc_counter:
+                doc_counter[prefix] = 0
+            doc_counter[prefix] += 1
+            unique_seq = f"{doc_counter[prefix]:03d}"
+        
+        return f"{prefix}-{fecha_clean}-{unique_seq}"
+    
+    def _generate_sequential_document(self, operacion_nombre: str, fecha: str, current_seq: int, total_count: int) -> str:
+        """
+        Genera un número de documento con sufijo secuencial.
+        
+        Formato: [PREFIX]-[FECHA]-[SECUENCIA]
+        Ejemplo: CB-23022026-01, CB-23022026-02, ..., CB-23022026-15
+        
+        Args:
+            operacion_nombre: Nombre de la operación (ej: 'COMISION')
+            fecha: Fecha en formato DD/MM/YYYY
+            current_seq: Número secuencial actual (1-based)
+            total_count: Total de registros de este tipo/fecha
+            
+        Returns:
+            String con el número de documento formateado
+        """
+        # Obtener configuración para el prefijo
+        config = None
+        if self.config_loader:
+            config = self.config_loader.get_operation_config(operacion_nombre)
+        
+        # Determinar prefijo
+        if config and config.get('clave_prefix'):
+            prefix = config['clave_prefix'].replace('-', '')
+        else:
+            # Fallback: usar prefijo basado en el nombre de operación
+            operacion_upper = operacion_nombre.upper()
+            if 'IVA' in operacion_upper:
+                prefix = "IVA COM"
+            elif 'COMISION' in operacion_upper:
+                prefix = "CB"
+            else:
+                prefix = "DOC"
+        
+        # Limpiar fecha
+        fecha_clean = fecha.replace('/', '').replace('-', '')
+        
+        # Determinar ancho del sufijo según el total (2 dígitos para <=99, 3 para más)
+        width = 2 if total_count <= 99 else 3
+        seq_str = f"{current_seq:0{width}d}"
+        
+        return f"{prefix}-{fecha_clean}-{seq_str}"
     
     def validate_record(self, record: Dict) -> bool:
         """

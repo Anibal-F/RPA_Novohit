@@ -74,29 +74,60 @@ class NovohitLoader:
         
         logger.info("Login exitoso")
         
-    def navigate_to_bank_operations(self):
+    def navigate_to_bank_operations(self, max_retries: int = 3) -> bool:
         """Navega a Operaciones Bancarias."""
         logger.info("Navegando a Operaciones Bancarias...")
         
-        # Clic en Administración
-        admin_menu = self.page.get_by_role("link", name="Administración").first
-        admin_menu.click()
-        time.sleep(0.5)
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"  Intento {attempt + 1}/{max_retries}")
+                
+                # Clic en Administración
+                admin_menu = self.page.get_by_role("link", name="Administración").first
+                admin_menu.click(timeout=10000)
+                time.sleep(0.5)
+                
+                # Hover en Tesorería
+                tesoreria_menu = self.page.get_by_role("link", name="Tesorería").first
+                tesoreria_menu.hover(timeout=10000)
+                time.sleep(0.5)
+                
+                # Clic en Operaciones Bancarias
+                operaciones_link = self.page.locator('a.x-menu-item:has-text("Operaciones Bancarias")').first
+                operaciones_link.click(timeout=10000)
+                time.sleep(2)  # Esperar carga
+                
+                # Detectar iframe
+                self._detect_frame()
+                
+                # Verificar que estamos en el listado
+                if self._verify_list_page():
+                    logger.info("✓ Navegación completada exitosamente")
+                    return True
+                else:
+                    logger.warning(f"  No se verificó el listado en intento {attempt + 1}")
+                    
+            except Exception as e:
+                logger.error(f"  Error en intento {attempt + 1}: {e}")
+                time.sleep(2)
+                continue
         
-        # Hover en Tesorería
-        tesoreria_menu = self.page.get_by_role("link", name="Tesorería").first
-        tesoreria_menu.hover()
-        time.sleep(0.5)
+        # Si todos los intentos fallan, intentar navegación directa por URL
+        logger.info("Intentando navegación directa por URL...")
+        try:
+            list_url = settings.NOVOHIT_URL.replace('user_login.php', 'bnk_operations.php')
+            self.page.goto(list_url, wait_until="domcontentloaded", timeout=15000)
+            time.sleep(3)
+            self._detect_frame()
+            
+            if self._verify_list_page():
+                logger.info("✓ Navegación por URL exitosa")
+                return True
+        except Exception as e2:
+            logger.error(f"  Navegación por URL también falló: {e2}")
         
-        # Clic en Operaciones Bancarias
-        operaciones_link = self.page.locator('a.x-menu-item:has-text("Operaciones Bancarias")').first
-        operaciones_link.click()
-        self.page.wait_for_load_state("networkidle")
-        
-        # Detectar iframe
-        self._detect_frame()
-        
-        logger.info("Navegación completada")
+        logger.error("❌ No se pudo navegar a Operaciones Bancarias")
+        return False
         
     def _detect_frame(self):
         """Detecta y selecciona el iframe del contenido."""
@@ -142,6 +173,37 @@ class NovohitLoader:
         # Si todo falla, usar la página principal
         self.frame = self.page
         logger.info("Usando página principal (sin iframe)")
+    
+    def _verify_list_page(self) -> bool:
+        """Verifica que estamos en la página de listado de operaciones."""
+        try:
+            if not self.frame:
+                return False
+            
+            check = self.frame.evaluate("""
+                () => {
+                    const addButton = document.querySelector('a[href*="is_ins_new=1"]');
+                    const recordTable = document.querySelector('table.Record');
+                    const gridTable = document.querySelector('table.Grid');
+                    const dataTable = document.querySelector('.x-grid3');
+                    
+                    return {
+                        has_add_button: !!addButton,
+                        has_record_table: !!recordTable,
+                        has_grid_table: !!gridTable,
+                        has_data_table: !!dataTable
+                    };
+                }
+            """)
+            
+            return (check.get('has_add_button') or 
+                    check.get('has_record_table') or 
+                    check.get('has_grid_table') or 
+                    check.get('has_data_table'))
+            
+        except Exception as e:
+            logger.warning(f"Error verificando página: {e}")
+            return False
             
     def click_add_button(self) -> bool:
         """Clic en el botón '+' para agregar nueva operación."""
@@ -604,6 +666,135 @@ class NovohitLoader:
                 pass
             return False
     
+    def filter_by_operation_and_date(self, operation_id: str, fecha: str, account_id: str = None) -> bool:
+        """
+        Filtra la tabla de operaciones bancarias por cuenta, operacion y fecha.
+        """
+        try:
+            logger.info(f"Filtrando por Cuenta: {account_id}, Operacion: {operation_id}, Fecha: {fecha}")
+            
+            if not self._verify_list_page():
+                logger.warning("No estamos en el listado de operaciones")
+                return False
+            
+            # 1. Seleccionar Cuenta Bancaria (si se proporciona)
+            if account_id:
+                try:
+                    # Selector especifico del HTML de Novohit
+                    cuenta_select = self.frame.locator('select[name="s_id_bnk_account"]').first
+                    
+                    if cuenta_select.count() > 0:
+                        cuenta_select.select_option(account_id)
+                        logger.info(f"  Cuenta seleccionada: {account_id}")
+                        time.sleep(0.5)
+                    else:
+                        logger.warning("  No se encontro el dropdown de cuenta (s_id_bnk_account)")
+                except Exception as e:
+                    logger.warning(f"  Error seleccionando cuenta: {e}")
+            
+            # 2. Seleccionar Tipo de Operacion
+            try:
+                # El select de operacion esta en la misma fila que cuenta
+                # Buscamos por el label "Operacion" cercano
+                op_select = self.frame.locator('select[name*="tp_operation"], select[name*="operation"]').first
+                
+                if op_select.count() > 0:
+                    op_select.select_option(operation_id)
+                    logger.info(f"  Operacion seleccionada: {operation_id}")
+                    time.sleep(0.5)
+                else:
+                    logger.warning("  No se encontro el dropdown de operacion")
+            except Exception as e:
+                logger.warning(f"  Error seleccionando operacion: {e}")
+            
+            # 3. Ingresar Fecha usando el datepicker de jQuery UI
+            try:
+                logger.info("  Abriendo datepicker...")
+                
+                # Hacer clic en el icono del calendario (ui-datepicker-trigger)
+                calendar_trigger = self.frame.locator('img.ui-datepicker-trigger').first
+                if calendar_trigger.count() > 0:
+                    calendar_trigger.click()
+                    logger.info("    Calendario abierto")
+                    time.sleep(0.5)
+                    
+                    # Usar JavaScript para seleccionar la fecha directamente
+                    # Esto es mas confiable que navegar el calendario mes a mes
+                    js_result = self.frame.evaluate(f"""
+                        () => {{
+                            try {{
+                                // Intentar usar el datepicker de jQuery si existe
+                                if (typeof $ !== 'undefined' && $.datepicker) {{
+                                    // Encontrar el input asociado al datepicker
+                                    const inputs = document.querySelectorAll('input[name*="dt_operation"]');
+                                    for (const input of inputs) {{
+                                        if ($(input).datepicker) {{
+                                            $(input).datepicker('setDate', '{fecha}');
+                                            $(input).trigger('change');
+                                            return {{ success: true, method: 'jquery' }};
+                                        }}
+                                    }}
+                                }}
+                                
+                                // Fallback: establecer valor directo en los campos
+                                const hiddenInput = document.querySelector('input[name="s_dt_operation"]');
+                                const calInput = document.querySelector('input[name="s_dt_operation_cal"]');
+                                
+                                const parts = '{fecha}'.split('/');
+                                const fechaISO = parts[2] + '-' + parts[1] + '-' + parts[0];
+                                
+                                if (hiddenInput) {{
+                                    hiddenInput.value = fechaISO;
+                                    hiddenInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                }}
+                                
+                                if (calInput) {{
+                                    calInput.value = '{fecha}';
+                                    calInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                }}
+                                
+                                // Cerrar el datepicker si esta abierto
+                                const datepickerDiv = document.querySelector('#ui-datepicker-div');
+                                if (datepickerDiv) {{
+                                    datepickerDiv.style.display = 'none';
+                                }}
+                                
+                                return {{ success: true, method: 'direct' }};
+                            }} catch (e) {{
+                                return {{ success: false, error: e.message }};
+                            }}
+                        }}
+                    """)
+                    
+                    if js_result and js_result.get('success'):
+                        logger.info(f"  Fecha establecida: {fecha} (metodo: {js_result.get('method')})")
+                    else:
+                        logger.warning(f"  No se pudo establecer fecha: {js_result}")
+                    
+                    time.sleep(0.3)
+                else:
+                    logger.warning("  No se encontro el icono del calendario")
+                    
+            except Exception as e:
+                logger.warning(f"  Error ingresando fecha: {e}")
+            
+            # 4. Clic en Boton Buscar
+            try:
+                search_btn = self.frame.locator('input[value="Buscar"]').first
+                if search_btn.count() > 0:
+                    search_btn.click()
+                    logger.info("  Filtro aplicado, esperando resultados...")
+                    time.sleep(3)
+                    return True
+            except Exception as e:
+                logger.warning(f"  Error clic en Buscar: {e}")
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"  Error filtrando tabla: {e}")
+            return False
+    
     def _click_nuevo_button(self) -> bool:
         """
         Hace clic en el botón 'Nuevo' para limpiar el formulario después de registrar.
@@ -650,6 +841,178 @@ class NovohitLoader:
         except Exception as e:
             logger.warning(f"  ⚠ Error clic en Nuevo: {e}")
             return False
+    
+    def _normalize_fecha(self, fecha: str) -> str:
+        """Normaliza una fecha al formato DDMMYYYY (8 digitos)."""
+        try:
+            fecha_clean = fecha.strip()
+            parts = fecha_clean.replace('-', '/').split('/')
+            
+            if len(parts) == 3:
+                dia = parts[0].zfill(2)
+                mes = parts[1].zfill(2)
+                anio = parts[2]
+                if len(anio) == 2:
+                    anio = "20" + anio
+                return f"{dia}{mes}{anio}"
+            else:
+                numeros = ''.join(c for c in fecha if c.isdigit())
+                if len(numeros) == 8:
+                    return numeros
+                elif len(numeros) == 6:
+                    return numeros[:4] + "20" + numeros[4:]
+                else:
+                    return numeros.ljust(8, '0')[:8]
+        except Exception as e:
+            logger.warning(f"Error normalizando fecha '{fecha}': {e}")
+            return ''.join(c for c in fecha if c.isdigit())[:8].ljust(8, '0')
+    
+    def get_last_document_sequence(self, prefix: str, fecha: str) -> int:
+        """Consulta en Novohit el ultimo numero de documento registrado."""
+        try:
+            fecha_clean = self._normalize_fecha(fecha)
+            search_pattern = f"{prefix}-{fecha_clean}-"
+            
+            logger.info(f"Buscando documentos con patron: '{search_pattern}'")
+            
+            if self.frame is None:
+                self._detect_frame()
+                if self.frame is None:
+                    return 0
+            
+            if not self._verify_list_page():
+                return 0
+            
+            # Buscar en la tabla
+            result = self.frame.evaluate("""
+                (searchPattern) => {
+                    const documentNumbers = [];
+                    const selectors = ['table.Grid td', 'table.Record td', 'td'];
+                    
+                    let allCells = [];
+                    for (const selector of selectors) {
+                        const cells = document.querySelectorAll(selector);
+                        if (cells.length > 0) {
+                            allCells = Array.from(cells);
+                            break;
+                        }
+                    }
+                    
+                    for (const cell of allCells) {
+                        const text = cell.textContent.trim();
+                        if (text.includes(searchPattern)) {
+                            const match = text.match(/-(\\d{1,3})$/);
+                            if (match) {
+                                documentNumbers.push(parseInt(match[1], 10));
+                            }
+                        }
+                    }
+                    
+                    return {
+                        found: documentNumbers.length > 0,
+                        maxNumber: documentNumbers.length > 0 ? Math.max(...documentNumbers) : 0
+                    };
+                }
+            """, search_pattern)
+            
+            if result and result.get('found'):
+                return result.get('maxNumber', 0)
+            return 0
+            
+        except Exception as e:
+            logger.warning(f"Error consultando documento: {e}")
+            return 0
+    
+    def get_last_document_sequence_via_search(self, prefix: str, fecha: str, operation_id: str = None, account_id: str = None) -> int:
+        """Filtra por cuenta, operacion y fecha, luego busca el ultimo consecutivo."""
+        try:
+            # Si tenemos operation_id, filtrar primero
+            if operation_id:
+                success = self.filter_by_operation_and_date(operation_id, fecha, account_id)
+                if not success:
+                    logger.warning("No se pudo aplicar el filtro")
+            
+            # Buscar en la tabla
+            return self.get_last_document_sequence(prefix, fecha)
+            
+        except Exception as e:
+            logger.warning(f"Error en busqueda: {e}")
+            return 0
+    
+    def update_document_sequences(self, records: List[Dict]) -> List[Dict]:
+        """Actualiza los numeros de documento para continuar la numeracion."""
+        if not records:
+            return records
+        
+        logger.info("Actualizando secuencias de documentos desde Novohit...")
+        
+        # Agrupar registros por prefijo, fecha, operacion y cuenta
+        groups = {}
+        for record in records:
+            no_document = record.get('no_document', '')
+            fecha = record.get('dt_operation', '')
+            operation_id = record.get('id_tp_operation', '')
+            account_id = record.get('id_bnk_account', '')
+            
+            parts = no_document.split('-')
+            if len(parts) >= 3:
+                potential_date = parts[-2]
+                if potential_date.isdigit() and len(potential_date) >= 6:
+                    prefix = '-'.join(parts[:-2])
+                    if len(potential_date) == 6:
+                        fecha_doc = potential_date[:4] + "20" + potential_date[4:]
+                    else:
+                        fecha_doc = potential_date
+                else:
+                    prefix = '-'.join(parts[:-1])
+                    fecha_doc = self._normalize_fecha(fecha)
+                
+                group_key = f"{prefix}_{fecha}_{operation_id}_{account_id}"
+                if group_key not in groups:
+                    groups[group_key] = {
+                        'prefix': prefix,
+                        'fecha': fecha,
+                        'fecha_doc': fecha_doc,
+                        'operation_id': operation_id,
+                        'account_id': account_id,
+                        'records': []
+                    }
+                groups[group_key]['records'].append(record)
+        
+        # Para cada grupo, consultar el ultimo consecutivo
+        updated_count = 0
+        for group_key, group_data in groups.items():
+            prefix = group_data['prefix']
+            fecha = group_data['fecha']
+            fecha_doc = group_data['fecha_doc']
+            operation_id = group_data['operation_id']
+            account_id = group_data['account_id']
+            group_records = group_data['records']
+            
+            logger.info(f"Grupo: {prefix} | Fecha: {fecha} | Operacion: {operation_id} | Cuenta: {account_id}")
+            
+            last_seq = self.get_last_document_sequence_via_search(prefix, fecha, operation_id, account_id)
+            
+            if last_seq > 0:
+                logger.info(f"  Ultimo registrado: {last_seq}, Continuando desde: {last_seq + 1}")
+                
+                for i, record in enumerate(group_records, 1):
+                    new_seq = last_seq + i
+                    old_document = record['no_document']
+                    fecha_doc_normalized = str(fecha_doc).zfill(8)[:8]
+                    total_expected = last_seq + len(group_records)
+                    width = 2 if total_expected <= 99 else 3
+                    new_document = f"{prefix}-{fecha_doc_normalized}-{new_seq:0{width}d}"
+                    
+                    record['no_document'] = new_document
+                    updated_count += 1
+                    
+                    logger.info(f"  {old_document} -> {new_document}")
+            else:
+                logger.info(f"  No hay registros previos, iniciando desde 01")
+        
+        logger.info(f"{updated_count} documentos actualizados")
+        return records
             
     def process_record(self, record: Dict, config_loader=None) -> bool:
         """
@@ -697,7 +1060,7 @@ class NovohitLoader:
             logger.error(f"Error procesando registro: {e}")
             return False
             
-    def process_records(self, records: List[Dict], delay: int = 3, config_loader=None) -> Dict:
+    def process_records(self, records: List[Dict], delay: int = 3, config_loader=None, auto_adjust_sequence: bool = True) -> Dict:
         """
         Procesa una lista de registros.
         
@@ -705,10 +1068,16 @@ class NovohitLoader:
             records: Lista de registros a procesar
             delay: Segundos de espera entre cada operación
             config_loader: Cargador de configuración para cuenta contable
+            auto_adjust_sequence: Si es True, ajusta la numeración desde el último documento registrado
             
         Returns:
             Diccionario con estadísticas del procesamiento
         """
+        # Ajustar secuencias de documentos antes de procesar
+        if auto_adjust_sequence and records:
+            logger.info("Verificando secuencias de documentos en Novohit...")
+            records = self.update_document_sequences(records)
+        
         results = {
             'total': len(records),
             'success': 0,

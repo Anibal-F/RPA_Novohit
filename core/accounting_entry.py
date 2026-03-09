@@ -35,45 +35,79 @@ class AccountingEntryHandler:
             # Esperar a que aparezca el formulario de asiento contable
             time.sleep(2)
             
-            # 1. Seleccionar Cuenta Contable
+            # 1. Seleccionar Cuenta Contable PRIMERO (campo obligatorio)
             cuenta_contable = self._get_cuenta_contable(record, config_loader)
             if cuenta_contable:
-                self._select_cuenta_contable(cuenta_contable)
-                logger.info(f"  ✓ Cuenta contable seleccionada: {cuenta_contable}")
+                success = self._select_cuenta_contable(cuenta_contable)
+                if success:
+                    logger.info(f"  ✓ Cuenta contable seleccionada: {cuenta_contable}")
+                else:
+                    logger.error("  ❌ No se pudo seleccionar cuenta contable")
+                    return False
+            else:
+                logger.error("  ❌ No se encontró cuenta contable en configuración")
+                return False
             
-            # 2. Llenar Monto (usar el mismo)
+            # Esperar a que se procese la selección de cuenta
+            time.sleep(1)
+            
+            # 2. Llenar Monto (campo obligatorio)
             monto = record.get('mn_operation') or record.get('mm_operation', '')
             if monto:
-                self._fill_field('mn_entry', str(monto))
+                self._fill_monto_asiento(str(monto))
                 logger.info(f"  ✓ Monto: {monto}")
+            else:
+                logger.error("  ❌ No se encontró monto")
+                return False
             
-            # 3. Tipo de Cambio (1.0000 por defecto)
+            # 3. Seleccionar Naturaleza - Débito (campo obligatorio)
+            success = self._select_naturaleza('debit')
+            if success:
+                logger.info("  ✓ Naturaleza: Débito")
+            else:
+                logger.error("  ❌ No se pudo seleccionar naturaleza")
+                return False
+            
+            # Esperar a que se procesen los campos obligatorios
+            time.sleep(1)
+            
+            # 4. Seleccionar Unidad de Negocio (si está disponible)
+            unidad_negocio_id = self._get_unidad_negocio_id(config_loader)
+            if unidad_negocio_id:
+                self._select_unidad_negocio(unidad_negocio_id)
+                time.sleep(0.5)
+            
+            # 5. Tipo de Cambio (1.0000 por defecto)
             tc = record.get('tc_currency', '1.0000')
-            self._fill_field('tc_currency', tc)
+            self._fill_field_js('tc_currency', tc)
             logger.info(f"  ✓ Tipo Cambio: {tc}")
             
-            # 4. Naturaleza - Débito (radio button)
-            self._select_naturaleza('debit')
-            logger.info("  ✓ Naturaleza: Débito")
-            
-            # 5. Concepto (mismo que el registro principal)
+            # 6. Concepto (mismo que el registro principal)
             concepto = record.get('notes', '')
             if concepto:
-                self._fill_field('observations', concepto[:50])
+                self._fill_field_js('observations', concepto[:50])
                 logger.info(f"  ✓ Concepto: {concepto[:50]}...")
             
-            # 6. Clic en Agregar
+            # Esperar antes de hacer clic en Agregar
             time.sleep(0.5)
-            self._click_agregar_asiento()
-            logger.info("  ✓ Asiento contable registrado")
+            
+            # 7. Clic en Agregar
+            success = self._click_agregar_asiento()
+            if success:
+                logger.info("  ✓ Asiento contable registrado")
+            else:
+                logger.error("  ❌ No se pudo hacer clic en Agregar")
+                return False
             
             # Esperar a que se procese
-            time.sleep(2)
+            time.sleep(1.5)
             
             return True
             
         except Exception as e:
             logger.error(f"Error en asiento contable: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def _get_cuenta_contable(self, record: Dict, config_loader) -> Optional[str]:
@@ -92,6 +126,114 @@ class AccountingEntryHandler:
         
         return None
     
+    def _get_unidad_negocio_id(self, config_loader) -> Optional[str]:
+        """Obtiene el ID de unidad de negocio desde la configuración."""
+        if not config_loader:
+            return None
+        return config_loader.get_unidad_negocio_id()
+    
+    def _select_unidad_negocio(self, unidad_id: str):
+        """
+        Selecciona la unidad de negocio en el dropdown.
+        
+        Args:
+            unidad_id: ID de la unidad de negocio (ej: '3' para Club Playa)
+        """
+        try:
+            logger.info(f"  Seleccionando unidad de negocio: {unidad_id}")
+            
+            # Primero verificar cuántas opciones tiene el dropdown
+            check_dropdown = self.frame.evaluate("""
+                () => {
+                    const select = document.querySelector('#id_c_branch');
+                    if (!select) return { exists: false, options: 0 };
+                    
+                    const options = Array.from(select.options);
+                    return {
+                        exists: true,
+                        options: options.length,
+                        option_values: options.map(o => ({ value: o.value, text: o.text }))
+                    };
+                }
+            """)
+            
+            logger.info(f"  Estado dropdown U.Negocio: {check_dropdown}")
+            
+            if not check_dropdown.get('exists'):
+                logger.info("  ℹ️ Dropdown de unidad de negocio no encontrado, continuando...")
+                return
+            
+            options_count = check_dropdown.get('options', 0)
+            option_values = check_dropdown.get('option_values', [])
+            
+            # Si solo hay 1 opción, es "SIN U.Negocio" - continuar sin cambiar
+            if options_count <= 1:
+                logger.info("  ℹ️ Solo hay 1 opción (SIN U.Negocio), continuando...")
+                return
+            
+            # Verificar si el valor configurado existe en las opciones
+            value_exists = any(opt['value'] == unidad_id for opt in option_values)
+            
+            if not value_exists:
+                logger.warning(f"  ⚠️ Unidad de negocio {unidad_id} no encontrada en opciones disponibles")
+                logger.info(f"  Opciones disponibles: {[opt['text'] for opt in option_values]}")
+                # Usar la primera opción válida (que no sea SIN U.Negocio)
+                for opt in option_values:
+                    if opt['value'] != '1' and opt['value'] != '':
+                        unidad_id = opt['value']
+                        logger.info(f"  Usando primera opción válida: {opt['text']} (ID: {unidad_id})")
+                        break
+            
+            # Seleccionar el valor con JavaScript
+            result = self.frame.evaluate("""
+                (params) => {
+                    const select = document.querySelector('#id_c_branch');
+                    if (!select) return { success: false, error: 'Select no encontrado' };
+                    
+                    // Buscar la opción con el valor
+                    let optionFound = false;
+                    let selectedText = '';
+                    
+                    for (let i = 0; i < select.options.length; i++) {
+                        if (select.options[i].value === params.unidad_id) {
+                            select.selectedIndex = i;
+                            selectedText = select.options[i].text;
+                            optionFound = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!optionFound) {
+                        return { success: false, error: 'Opción no encontrada', searched: params.unidad_id };
+                    }
+                    
+                    // Disparar eventos para que ExtJS detecte el cambio
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    select.dispatchEvent(new Event('blur', { bubbles: true }));
+                    
+                    // Intentar disparar evento específico de ExtJS si existe
+                    if (typeof Ext !== 'undefined' && Ext.getCmp) {
+                        const cmp = Ext.getCmp('id_c_branch');
+                        if (cmp && cmp.setValue) {
+                            cmp.setValue(params.unidad_id);
+                        }
+                    }
+                    
+                    return { success: true, selected: selectedText, value: params.unidad_id };
+                }
+            """, {'unidad_id': unidad_id})
+            
+            if result.get('success'):
+                logger.info(f"  ✓ Unidad de negocio seleccionada: {result.get('selected')}")
+            else:
+                logger.warning(f"  ⚠️ No se pudo seleccionar unidad: {result.get('error')}")
+            
+            time.sleep(0.5)
+            
+        except Exception as e:
+            logger.warning(f"  ⚠️ Error seleccionando unidad de negocio: {e}")
+            # No fallar el proceso si esto falla
+    
     def _get_operacion_nombre(self, id_tp_operation: str) -> str:
         """Convierte ID de operación a nombre."""
         operaciones = {
@@ -109,117 +251,201 @@ class AccountingEntryHandler:
         }
         return operaciones.get(id_tp_operation, '')
     
-    def _select_cuenta_contable(self, cuenta: str):
-        """Selecciona la cuenta contable del dropdown usando el método estándar de ExtJS."""
+    def _select_cuenta_contable(self, cuenta: str) -> bool:
+        """Selecciona la cuenta contable del dropdown de forma robusta."""
         try:
             logger.info(f"  Seleccionando cuenta contable: {cuenta}")
             
-            # Extraer el número de cuenta (ej: "11180001" de "IVA acreditable 16% - 11180001")
-            cuenta_numero = cuenta.split('-')[-1].strip() if '-' in cuenta else cuenta
-            search_term = 'iva' if 'iva' in cuenta.lower() else 'comision'
+            # La cuenta viene como nombre descriptivo (ej: "IVA acreditable 16%")
+            # El dropdown muestra formato: "11180001 - IVA acreditable 16%"
+            # Buscamos por el nombre exacto (case insensitive)
+            search_text = cuenta.strip().lower()
             
-            # MÉTODO 1: Abrir dropdown y seleccionar opción (más confiable)
-            logger.info(f"  Usando método dropdown para: {cuenta_numero}")
+            logger.info(f"  Buscando texto: '{search_text}'")
             
-            # Hacer clic en el trigger para abrir el dropdown
-            trigger_clicked = self.frame.evaluate("""() => {
-                // Buscar el trigger por ID específico
+            # Paso 1: Hacer clic en el trigger para abrir el dropdown
+            trigger_result = self.frame.evaluate("""() => {
+                // Buscar por ID específico
                 let trigger = document.querySelector('#ext-gen55');
                 if (trigger) {
                     trigger.click();
                     return { success: true, method: 'ext-gen55' };
                 }
-                // Fallback: buscar por clase
+                // Buscar por clase
                 trigger = document.querySelector('.x-form-arrow-trigger');
                 if (trigger) {
                     trigger.click();
                     return { success: true, method: 'arrow-trigger' };
                 }
+                // Buscar junto al input de cuenta
+                const cuentaInput = document.querySelector('#cod_op_account_slc');
+                if (cuentaInput && cuentaInput.parentElement) {
+                    trigger = cuentaInput.parentElement.querySelector('.x-form-trigger');
+                    if (trigger) {
+                        trigger.click();
+                        return { success: true, method: 'parent-trigger' };
+                    }
+                }
                 return { success: false, error: 'Trigger no encontrado' };
             }""")
             
-            logger.info(f"  Click en trigger: {trigger_clicked}")
+            logger.info(f"  Trigger clic: {trigger_result}")
             
-            if trigger_clicked.get('success'):
-                time.sleep(2)  # Esperar a que abra el dropdown
-                
-                # Seleccionar la opción
+            if not trigger_result.get('success'):
+                return False
+            
+            # Paso 2: Esperar a que el dropdown se abra y cargue
+            time.sleep(2)
+            
+            # Paso 3: Buscar y seleccionar la opción (con reintentos)
+            max_attempts = 3
+            for attempt in range(max_attempts):
                 result = self.frame.evaluate("""(params) => {
+                    // Buscar items del dropdown
                     const items = document.querySelectorAll('.x-combo-list-item');
                     
-                    // Buscar coincidencia exacta por número de cuenta
+                    if (items.length === 0) {
+                        return { success: false, error: 'No hay items en el dropdown', attempt: params.attempt };
+                    }
+                    
+                    // PRIMERO: Buscar coincidencia exacta por texto completo (case insensitive)
                     for (let item of items) {
                         const text = item.textContent || '';
-                        if (text.includes(params.cuenta_numero)) {
-                            item.scrollIntoView({ block: 'nearest' });
+                        const textLower = text.toLowerCase();
+                        // Buscar el texto exacto de la cuenta
+                        if (textLower.includes(params.search_text)) {
+                            item.scrollIntoView({ block: 'center', behavior: 'instant' });
                             item.click();
-                            return { success: true, selected: text, method: 'exact' };
+                            return { success: true, selected: text, method: 'exact_text_match' };
                         }
                     }
                     
-                    // Fallback: buscar por término parcial
+                    // SEGUNDO: Si no se encuentra, buscar por palabras clave específicas
+                    // Extraer palabras clave del texto de búsqueda
+                    const keywords = params.search_text.split(' ').filter(w => w.length > 3);
+                    
                     for (let item of items) {
                         const text = item.textContent || '';
-                        if (text.toLowerCase().includes(params.search_term)) {
-                            item.scrollIntoView({ block: 'nearest' });
+                        const textLower = text.toLowerCase();
+                        
+                        // Verificar si todas las palabras clave están presentes
+                        const allKeywordsMatch = keywords.every(kw => textLower.includes(kw));
+                        if (allKeywordsMatch && keywords.length > 0) {
+                            item.scrollIntoView({ block: 'center', behavior: 'instant' });
                             item.click();
-                            return { success: true, selected: text, method: 'fallback' };
+                            return { success: true, selected: text, method: 'keyword_match' };
                         }
                     }
                     
-                    return { success: false, items: items.length, searched: params.cuenta_numero };
-                }""", {'cuenta_numero': cuenta_numero, 'search_term': search_term})
+                    return { 
+                        success: false, 
+                        error: 'Opción no encontrada', 
+                        items_count: items.length,
+                        search_text: params.search_text,
+                        sample_items: Array.from(items).slice(0, 5).map(i => i.textContent),
+                        attempt: params.attempt 
+                    };
+                }""", {'search_text': search_text, 'attempt': attempt + 1})
                 
-                logger.info(f"  Resultado selección dropdown: {result}")
+                logger.info(f"  Intento {attempt + 1}: {result}")
                 
                 if result.get('success'):
-                    logger.info(f"  ✓ Cuenta seleccionada: {result.get('selected')}")
-                    time.sleep(0.5)
-                    return
-            
-            # MÉTODO 2: Escribir directamente (fallback)
-            logger.info("  Intentando método directo...")
-            try:
-                cuenta_field = self.frame.locator('#cod_op_account_slc').first
-                if cuenta_field.count() > 0:
-                    cuenta_field.click()
-                    time.sleep(0.3)
-                    cuenta_field.fill(cuenta_numero)
-                    cuenta_field.press('Tab')
-                    logger.info(f"  ✓ Cuenta ingresada directamente: {cuenta_numero}")
-                    time.sleep(0.5)
-                    return
-            except Exception as e:
-                logger.debug(f"  Método directo falló: {e}")
-            
-            # MÉTODO 3: Forzar valor vía JavaScript
-            logger.info("  Usando método JavaScript...")
-            self.frame.evaluate("""(params) => {
-                const input = document.querySelector('#cod_op_account_slc');
-                const hidden = document.querySelector('input[name="cod_op_account_slc"]');
+                    time.sleep(2)  # Esperar a que se cierre el dropdown y se procese
+                    return True
                 
-                if (input) {
-                    input.value = params.valor;
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-                if (hidden) {
-                    hidden.value = params.valor;
-                }
-                
-                // Intentar disparar evento de ExtJS si existe
-                if (input && input.getAttribute('data-store')) {
-                    const store = Ext.getCmp && Ext.getCmp(input.id);
-                    if (store && store.setValue) {
-                        store.setValue(params.valor);
-                    }
-                }
-            }""", {'valor': cuenta_numero})
+                # Si no tuvo éxito, esperar y reintentar
+                time.sleep(1.5)
             
-            logger.info(f"  ✓ Valor forzado vía JS: {cuenta_numero}")
+            # Si todos los intentos fallaron, reportar error
+            logger.error(f"  ❌ No se pudo encontrar la cuenta contable '{cuenta}' después de {max_attempts} intentos")
+            
+            # Cerrar el dropdown primero (presionar Escape)
+            self.frame.evaluate("""() => {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            }""")
+            time.sleep(0.5)
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"  ❌ Error seleccionando cuenta contable: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
+    
+    def _fill_monto_asiento(self, monto: str):
+        """Llena el campo de monto del asiento contable de forma robusta."""
+        try:
+            # Usar JavaScript para llenar el campo mn_entry
+            result = self.frame.evaluate(f"""
+                () => {{
+                    // Buscar por name
+                    let input = document.querySelector('input[name="mn_entry"]');
+                    if (!input) {{
+                        // Buscar por id que contenga mn_entry
+                        const inputs = document.querySelectorAll('input');
+                        for (const inp of inputs) {{
+                            if (inp.name && inp.name.includes('mn_entry')) {{
+                                input = inp;
+                                break;
+                            }}
+                        }}
+                    }}
+                    
+                    if (input) {{
+                        input.value = '{monto}';
+                        input.dispatchEvent(new Event('focus', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                        return {{ success: true, value: input.value }};
+                    }}
+                    
+                    return {{ success: false, error: 'Campo mn_entry no encontrado' }};
+                }}
+            """)
+            
+            logger.info(f"  Monto llenado: {result}")
             time.sleep(0.5)
             
         except Exception as e:
-            logger.warning(f"  ⚠ Error seleccionando cuenta contable: {e}")
+            logger.warning(f"  ⚠ Error llenando monto con JS: {e}")
+            # Fallback
+            try:
+                field = self.frame.locator('input[name="mn_entry"]').first
+                if field.count() > 0:
+                    field.fill(monto)
+                    field.blur()
+            except:
+                pass
+    
+    def _fill_field_js(self, field_name: str, value: str):
+        """Llena un campo del formulario usando JavaScript."""
+        try:
+            result = self.frame.evaluate(f"""
+                () => {{
+                    // Buscar por name
+                    let input = document.querySelector('input[name="{field_name}"]');
+                    if (!input) {{
+                        // Buscar por id
+                        input = document.querySelector('#{field_name}');
+                    }}
+                    
+                    if (input) {{
+                        input.value = '{value}';
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                        return {{ success: true }};
+                    }}
+                    
+                    return {{ success: false }};
+                }}
+            """)
+            time.sleep(0.3)
+                
+        except Exception as e:
+            logger.warning(f"Error llenando campo {field_name}: {e}")
     
     def _fill_field(self, field_name: str, value: str):
         """Llena un campo del formulario."""
@@ -239,20 +465,20 @@ class AccountingEntryHandler:
         except Exception as e:
             logger.warning(f"Error llenando campo {field_name}: {e}")
     
-    def _select_naturaleza(self, tipo: str = 'debit'):
-        """Selecciona Débito o Crédito."""
+    def _select_naturaleza(self, tipo: str = 'debit') -> bool:
+        """Selecciona Débito o Crédito. Retorna True si tuvo éxito."""
         try:
             logger.info(f"  Seleccionando naturaleza: {tipo}")
             
-            # Usar JavaScript con argumentos para evitar problemas con comillas
-            js_script = """
+            # Usar JavaScript para seleccionar el radio button
+            js_result = self.frame.evaluate("""
                 (params) => {
                     const tipo = params.tipo;
                     
                     // Buscar por value
                     let radio = document.querySelector('input[type="radio"][value="' + tipo + '"]');
                     
-                    // Si no, buscar por texto cercano
+                    // Si no, buscar por texto cercano (label que contiene "Débito" o "Debit")
                     if (!radio) {
                         const labels = document.querySelectorAll('label');
                         for (let label of labels) {
@@ -267,15 +493,28 @@ class AccountingEntryHandler:
                         }
                     }
                     
-                    // Buscar en inputs sin atributo value pero con name
+                    // Buscar por name que contenga 'debit' o 'naturaleza'
                     if (!radio) {
                         const inputs = document.querySelectorAll('input[type="radio"]');
                         for (let input of inputs) {
                             const name = input.name || '';
                             const id = input.id || '';
-                            if (name.includes('debit') || id.includes('debit') || name.includes('natur')) {
+                            if (name.includes('debit') || id.includes('debit') || 
+                                name.includes('natur') || id.includes('natur')) {
                                 radio = input;
                                 break;
+                            }
+                        }
+                    }
+                    
+                    // Buscar por posición (primer radio button en la tabla de asientos)
+                    if (!radio) {
+                        const asientoForm = document.querySelector('form[name*="entries"]') || 
+                                           document.querySelector('form[action*="entries"]');
+                        if (asientoForm) {
+                            const radios = asientoForm.querySelectorAll('input[type="radio"]');
+                            if (radios.length > 0) {
+                                radio = radios[0]; // Primer radio (normalmente Débito)
                             }
                         }
                     }
@@ -284,42 +523,71 @@ class AccountingEntryHandler:
                         radio.checked = true;
                         radio.click();
                         radio.dispatchEvent(new Event('change', { bubbles: true }));
-                        return { success: true, id: radio.id, name: radio.name };
+                        radio.dispatchEvent(new Event('click', { bubbles: true }));
+                        return { success: true, id: radio.id, name: radio.name, value: radio.value };
                     }
                     
                     return { success: false, error: 'Radio button no encontrado' };
                 }
-            """
-            js_result = self.frame.evaluate(js_script, {'tipo': tipo})
+            """, {'tipo': tipo})
+            
             logger.info(f"  Resultado naturaleza: {js_result}")
+            time.sleep(0.5)
+            return js_result.get('success', False)
             
         except Exception as e:
             logger.warning(f"  ⚠ Error seleccionando naturaleza: {e}")
+            return False
     
-    def _click_agregar_asiento(self):
-        """Clic en el botón Agregar del asiento."""
+    def _click_agregar_asiento(self) -> bool:
+        """Clic en el botón Agregar del asiento. Retorna True si tuvo éxito."""
         try:
-            # Buscar el botón Agregar (hay varios, buscar el del formulario de asientos)
-            btns = self.frame.locator('input[type="submit"][value="Agregar"]').all()
-            if len(btns) > 1:
-                # Usar el segundo (el primero es del formulario principal)
-                btns[1].click()
-            else:
-                # JavaScript como fallback
-                self.frame.evaluate("""
-                    () => {
-                        const forms = document.forms;
-                        for (let form of forms) {
-                            if (form.name.includes('entries') || form.action.includes('entries')) {
-                                const btn = form.querySelector('input[value="Agregar"]');
-                                if (btn) {
-                                    btn.click();
-                                    return true;
-                                }
+            logger.info("  Haciendo clic en Agregar asiento...")
+            
+            # Intentar con JavaScript primero (más confiable)
+            js_result = self.frame.evaluate("""
+                () => {
+                    // Buscar en formularios de asientos
+                    const forms = document.forms;
+                    for (let form of forms) {
+                        if (form.name && (form.name.includes('entries') || form.action.includes('entries'))) {
+                            const btn = form.querySelector('input[type="submit"][value="Agregar"]');
+                            if (btn) {
+                                btn.click();
+                                return { success: true, method: 'form-entries' };
                             }
                         }
-                        return false;
                     }
-                """)
+                    
+                    // Buscar todos los botones Agregar
+                    const allBtns = document.querySelectorAll('input[type="submit"][value="Agregar"]');
+                    if (allBtns.length > 1) {
+                        // El segundo suele ser del asiento
+                        allBtns[1].click();
+                        return { success: true, method: 'second-button' };
+                    } else if (allBtns.length === 1) {
+                        allBtns[0].click();
+                        return { success: true, method: 'only-button' };
+                    }
+                    
+                    // Buscar por texto en botones
+                    const buttons = document.querySelectorAll('button, input[type="submit"]');
+                    for (let btn of buttons) {
+                        const text = (btn.textContent || btn.value || '').toLowerCase();
+                        if (text.includes('agregar')) {
+                            btn.click();
+                            return { success: true, method: 'text-search' };
+                        }
+                    }
+                    
+                    return { success: false, error: 'Botón no encontrado' };
+                }
+            """)
+            
+            logger.info(f"  Resultado clic Agregar: {js_result}")
+            time.sleep(0.5)
+            return js_result.get('success', False)
+            
         except Exception as e:
             logger.warning(f"Error clic en Agregar asiento: {e}")
+            return False

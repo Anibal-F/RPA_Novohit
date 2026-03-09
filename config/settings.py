@@ -28,7 +28,7 @@ DATA_OUTPUT_DIR = BASE_DIR / "data" / "output"
 
 # Configuración de procesamiento
 BATCH_SIZE = 10  # Registros a procesar antes de pausa
-DELAY_BETWEEN_OPERATIONS = 2  # Segundos entre cada registro
+DELAY_BETWEEN_OPERATIONS = 1.5  # Segundos entre cada registro (optimizado)
 HEADLESS = False  # True para ejecución sin navegador visible
 
 # Configuración de logging

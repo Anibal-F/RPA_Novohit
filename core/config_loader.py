@@ -31,8 +31,14 @@ class ExcelConfigLoader:
             Diccionario con la configuración por tipo de operación
         """
         try:
-            # Leer primero la celda C1 para obtener la cuenta bancaria
+            # Leer primero la celda B1 para obtener el nombre del banco
+            self._load_bank_name()
+            
+            # Leer celda D1 para obtener la cuenta bancaria
             self._load_bank_account()
+            
+            # Leer celda L1 para obtener unidad de negocio
+            self._load_unidad_negocio()
             
             # Intentar leer la hoja Configuración (desde fila 2 para omitir header de cuenta)
             df = pd.read_excel(self.file_path, sheet_name='Configuración', header=1)
@@ -92,6 +98,48 @@ class ExcelConfigLoader:
                     return col
         return None
     
+    def _load_bank_name(self):
+        """Lee el nombre del banco desde la celda B1 de la hoja Configuración."""
+        try:
+            # Leer la hoja sin header para obtener la celda B1
+            df_raw = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
+            
+            # La celda B1 está en fila 0, columna 1 (índice 1, ya que A=0, B=1)
+            if len(df_raw) > 0 and len(df_raw.columns) > 1:
+                banco_valor = df_raw.iloc[0, 1]  # B1 = fila 0, columna 1
+                banco_str = str(banco_valor).strip().upper()
+                
+                # Mapeo de nombres comunes a códigos de banco
+                bank_mapping = {
+                    'BBVA': 'BBVA',
+                    'BANCOMER': 'BBVA',
+                    'BANORTE': 'BANORTE',
+                    'IXE': 'BANORTE',
+                    'BANREGIO': 'BANREGIO',
+                }
+                
+                if banco_str and banco_str.lower() != 'nan' and banco_str != '':
+                    # Buscar coincidencia en el mapeo
+                    for key, value in bank_mapping.items():
+                        if key in banco_str:
+                            self.bank_name = value
+                            logger.info(f"Banco configurado (B1): {self.bank_name} (desde: {banco_str})")
+                            return
+                    
+                    # Si no hay coincidencia, usar el valor directo si es válido
+                    if banco_str in ['BBVA', 'BANORTE', 'BANREGIO']:
+                        self.bank_name = banco_str
+                        logger.info(f"Banco configurado (B1): {self.bank_name}")
+                    else:
+                        logger.warning(f"Banco en B1 no reconocido: {banco_str}")
+                else:
+                    logger.info("Celda B1 vacía, se detectará banco por nombre de archivo")
+            else:
+                logger.info("No se pudo leer celda B1, se detectará banco por nombre de archivo")
+                
+        except Exception as e:
+            logger.warning(f"Error leyendo nombre de banco de B1: {e}")
+    
     def _load_bank_account(self):
         """Lee el ID de cuenta bancaria desde la celda D1 de la hoja Configuración."""
         try:
@@ -122,14 +170,62 @@ class ExcelConfigLoader:
         except Exception as e:
             logger.warning(f"Error leyendo cuenta bancaria de D1: {e}")
     
+    def _load_unidad_negocio(self):
+        """Lee el ID de unidad de negocio desde la celda L1 de la hoja Configuración."""
+        try:
+            # Leer la hoja sin header para obtener la celda L1
+            df_raw = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
+            
+            # La celda L1 está en fila 0, columna 11 (índice 11, ya que A=0, B=1, ..., L=11)
+            if len(df_raw) > 0 and len(df_raw.columns) > 11:
+                unidad_valor = df_raw.iloc[0, 11]  # L1 = fila 0, columna 11
+                unidad_str = str(unidad_valor).strip()
+                
+                # Validar que sea un número
+                if unidad_str and unidad_str.lower() != 'nan' and unidad_str != '':
+                    # Extraer solo el valor numérico
+                    import re
+                    match = re.search(r'\d+', unidad_str)
+                    if match:
+                        self.unidad_negocio_id = match.group()
+                        logger.info(f"ID de unidad de negocio configurado (L1): {self.unidad_negocio_id}")
+                    else:
+                        self.unidad_negocio_id = unidad_str
+                        logger.info(f"ID de unidad de negocio configurado (L1): {self.unidad_negocio_id}")
+                else:
+                    logger.info("Celda L1 vacía, se usará selección automática de unidad de negocio")
+            else:
+                logger.info("No se pudo leer celda L1, se usará selección automática")
+                
+        except Exception as e:
+            logger.warning(f"Error leyendo unidad de negocio de L1: {e}")
+    
+    def get_bank_name(self) -> Optional[str]:
+        """
+        Obtiene el nombre del banco configurado en C1.
+        
+        Returns:
+            Nombre del banco (BBVA, BANORTE, BANREGIO) o None si no está configurado
+        """
+        return self.bank_name
+    
     def get_bank_account_id(self) -> Optional[str]:
         """
-        Obtiene el ID de cuenta bancaria configurado en C1.
+        Obtiene el ID de cuenta bancaria configurado en D1.
         
         Returns:
             ID de cuenta bancaria o None si no está configurado
         """
         return self.bank_account_id
+    
+    def get_unidad_negocio_id(self) -> Optional[str]:
+        """
+        Obtiene el ID de unidad de negocio configurado en L1.
+        
+        Returns:
+            ID de unidad de negocio o None si no está configurado
+        """
+        return self.unidad_negocio_id
     
     def get_operation_config(self, operacion: str) -> Optional[Dict]:
         """
@@ -179,16 +275,18 @@ class ExcelConfigLoader:
         
         return observaciones
     
-    def format_clave_documento(self, operacion: str, fecha: str) -> str:
+    def format_clave_documento(self, operacion: str, fecha: str, index: int = 0, doc_counter: Dict = None) -> str:
         """
-        Formatea la clave de documento según configuración.
+        Formatea la clave de documento según configuración con secuencia única.
         
         Args:
             operacion: Tipo de operación
             fecha: Fecha en formato DD/MM/YYYY
+            index: Índice del registro
+            doc_counter: Contador de documentos por tipo
             
         Returns:
-            String formateado (ej: "CB-23022026")
+            String formateado (ej: "CB-23022026-001")
         """
         config = self.get_operation_config(operacion)
         
@@ -199,7 +297,19 @@ class ExcelConfigLoader:
         # Limpiar fecha
         fecha_clean = fecha.replace('/', '').replace('-', '')
         
-        return f"{prefix}-{fecha_clean}"
+        # Generar secuencia única
+        if doc_counter is not None:
+            if prefix not in doc_counter:
+                doc_counter[prefix] = 0
+            doc_counter[prefix] += 1
+            unique_seq = f"{doc_counter[prefix]:03d}"
+        else:
+            # Fallback: usar timestamp + índice
+            import time
+            timestamp = int(time.time()) % 10000
+            unique_seq = f"{timestamp:04d}-{index+1:02d}"
+        
+        return f"{prefix}-{fecha_clean}-{unique_seq}"
 
 
 # Función de conveniencia
