@@ -275,29 +275,59 @@ class ExcelConfigLoader:
             
             logger.info(f"[DEBUG] Columnas encontradas en Configuración: {list(df.columns)}")
             
-            # Buscar columnas por nombre
-            id_col = self._find_column(df, ['ID', 'ID UNIDAD', 'ID_UNIDAD'])
-            unidad_col = self._find_column(df, ['UNIDAD DE NEGOCIO', 'UNIDAD'])
-            cuenta_col = self._find_column(df, ['CUENTA DEPOSITOS', 'CUENTA DEPÓSITOS', 'CUENTA_DEPOSITOS'])
+            # Buscar columnas por nombre - buscar en TODAS las columnas del DataFrame
+            logger.info(f"[DEBUG] Buscando columnas de depósito...")
             
-            logger.info(f"[DEBUG] Columnas de depósito: ID={id_col}, Unidad={unidad_col}, Cuenta={cuenta_col}")
+            # Buscar columna ID (puede haber dos: una para operaciones, otra para unidades)
+            # La segunda columna ID (la de unidades) suele estar después de "Cuentas" o "Bancos"
+            id_cols = [c for c in df.columns if 'ID' in str(c).upper()]
+            logger.info(f"[DEBUG] Columnas ID encontradas: {id_cols}")
+            
+            # Buscar columna de cuenta de depósitos
+            cuenta_col = None
+            for c in df.columns:
+                col_upper = str(c).upper()
+                if 'CUENTA' in col_upper and ('DEPOSITO' in col_upper or 'DEPÓSITO' in col_upper):
+                    cuenta_col = c
+                    break
+            
+            # Si no encontramos la específica, buscar "Cuenta Depósitos" o similar
+            if not cuenta_col:
+                cuenta_col = self._find_column(df, ['CUENTA DEPOSITOS', 'CUENTA DEPÓSITOS', 'CUENTAS DEPOSITO'])
+            
+            # Buscar columna ID que esté cerca de la cuenta de depósitos
+            id_col = None
+            if cuenta_col:
+                # Encontrar el índice de la columna de cuenta
+                cuenta_idx = list(df.columns).index(cuenta_col)
+                # Buscar columna ID a la izquierda (normalmente 1-2 columnas antes)
+                for i in range(cuenta_idx - 1, max(-1, cuenta_idx - 5), -1):
+                    if i >= 0 and 'ID' in str(df.columns[i]).upper():
+                        id_col = df.columns[i]
+                        break
+            
+            # Si no encontramos, usar la segunda columna ID (la de unidades)
+            if not id_col and len(id_cols) >= 2:
+                id_col = id_cols[1]  # Segunda columna ID (la primera suele ser para operaciones)
+            
+            logger.info(f"[DEBUG] Columnas de depósito: ID={id_col}, Cuenta={cuenta_col}")
             
             if not id_col or not cuenta_col:
                 logger.warning("[DEBUG] No se encontraron columnas de ID o Cuenta Depósitos")
                 return
             
             # Procesar filas
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
                 id_val = row.get(id_col)
                 cuenta_val = row.get(cuenta_col)
-                unidad_val = row.get(unidad_col, '')
                 
                 # Convertir a string y limpiar
                 id_str = str(id_val).strip() if pd.notna(id_val) else ''
                 cuenta_str = str(cuenta_val).strip() if pd.notna(cuenta_val) else ''
-                unidad_nombre = str(unidad_val).strip() if pd.notna(unidad_val) else ''
                 
-                logger.info(f"[DEBUG] Procesando fila: ID='{id_str}', Cuenta='{cuenta_str}', Unidad='{unidad_nombre}'")
+                # Solo mostrar debug para filas que tienen datos
+                if id_str and id_str.lower() != 'nan':
+                    logger.info(f"[DEBUG] Fila {idx}: ID='{id_str}', Cuenta='{cuenta_str}'")
                 
                 # Validar que tenemos datos válidos
                 if id_str and id_str.lower() != 'nan' and cuenta_str and cuenta_str.lower() != 'nan':
@@ -307,7 +337,7 @@ class ExcelConfigLoader:
                     if match:
                         unidad_id = match.group()
                         self.cuentas_deposito_por_unidad[unidad_id] = cuenta_str
-                        logger.info(f"Cuenta depósito cargada: Unidad {unidad_id} ({unidad_nombre}) -> {cuenta_str}")
+                        logger.info(f"Cuenta depósito cargada: Unidad {unidad_id} -> {cuenta_str}")
             
             if self.cuentas_deposito_por_unidad:
                 logger.info(f"Cuentas de depósito por unidad cargadas: {len(self.cuentas_deposito_por_unidad)}")
