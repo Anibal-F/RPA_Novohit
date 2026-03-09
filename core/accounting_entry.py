@@ -60,10 +60,11 @@ class AccountingEntryHandler:
                 logger.error("  ❌ No se encontró monto")
                 return False
             
-            # 3. Seleccionar Naturaleza - Débito (campo obligatorio)
-            success = self._select_naturaleza('debit')
+            # 3. Seleccionar Naturaleza según configuración del Excel (columna F)
+            naturaleza = self._get_naturaleza(record, config_loader)
+            success = self._select_naturaleza(naturaleza)
             if success:
-                logger.info("  ✓ Naturaleza: Débito")
+                logger.info(f"  ✓ Naturaleza: {naturaleza.capitalize()}")
             else:
                 logger.error("  ❌ No se pudo seleccionar naturaleza")
                 return False
@@ -113,18 +114,50 @@ class AccountingEntryHandler:
     def _get_cuenta_contable(self, record: Dict, config_loader) -> Optional[str]:
         """Obtiene la cuenta contable según el tipo de operación."""
         if not config_loader:
+            logger.warning("  [DEBUG] No hay config_loader")
             return None
         
         # Obtener el nombre de la operación
         operacion_id = record.get('id_tp_operation')
         operacion_nombre = self._get_operacion_nombre(operacion_id)
+        logger.info(f"  [DEBUG] Buscando cuenta contable para: {operacion_nombre} (ID: {operacion_id})")
         
         # Buscar en configuración
         config = config_loader.get_operation_config(operacion_nombre)
-        if config and 'cuenta_contable' in config:
-            return config['cuenta_contable']
+        if config:
+            logger.info(f"  [DEBUG] Config encontrada: {config}")
+            if 'cuenta_contable' in config:
+                cuenta = config['cuenta_contable']
+                logger.info(f"  [DEBUG] Cuenta contable en config: '{cuenta}'")
+                if cuenta and cuenta.strip() and cuenta.lower() != 'nan':
+                    return cuenta
+                else:
+                    logger.warning(f"  [DEBUG] Cuenta contable vacía o inválida: '{cuenta}'")
+            else:
+                logger.warning(f"  [DEBUG] No hay 'cuenta_contable' en config")
+        else:
+            logger.warning(f"  [DEBUG] No se encontró config para: {operacion_nombre}")
         
         return None
+    
+    def _get_naturaleza(self, record: Dict, config_loader) -> str:
+        """Obtiene la naturaleza (debito/credito) según el tipo de operación."""
+        if not config_loader:
+            return 'debit'  # Default
+        
+        # Obtener el nombre de la operación
+        operacion_id = record.get('id_tp_operation')
+        operacion_nombre = self._get_operacion_nombre(operacion_id)
+        
+        # Buscar en configuración del Excel
+        naturaleza = config_loader.get_naturaleza_for_operation(operacion_nombre)
+        if naturaleza:
+            return naturaleza
+        
+        # Fallback: según el tipo de operación por defecto
+        if operacion_id == '6' or record.get('categoria') == 'deposito':
+            return 'credit'  # Depósitos son crédito por defecto
+        return 'debit'  # Comisiones e IVA son débito por defecto
     
     def _get_unidad_negocio_id(self, config_loader) -> Optional[str]:
         """Obtiene el ID de unidad de negocio desde la configuración."""

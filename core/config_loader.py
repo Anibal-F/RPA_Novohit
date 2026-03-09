@@ -55,6 +55,7 @@ class ExcelConfigLoader:
             observaciones_col = self._find_column(df, ['OBSERVACIONES', 'OBSERVACION'])
             clave_col = self._find_column(df, ['CLAVE DOCUMENTO', 'CLAVE', 'DOCUMENTO'])
             cuenta_col = self._find_column(df, ['CUENTA CONTABLE', 'CUENTA', 'CONTABLE'])
+            naturaleza_col = self._find_column(df, ['NATURALEZA', 'NATURALEZA (DEBITO/CREDITO)', 'DEBITO/CREDITO'])
             
             if not operacion_col:
                 logger.warning("No se encontró columna de operación en Configuración")
@@ -70,11 +71,13 @@ class ExcelConfigLoader:
                     observaciones_template = str(row.get(observaciones_col, '')).strip() if observaciones_col else ''
                     clave_prefix = str(row.get(clave_col, '')).strip() if clave_col else ''
                     cuenta_contable = str(row.get(cuenta_col, '')).strip() if cuenta_col else ''
+                    naturaleza = str(row.get(naturaleza_col, '')).strip().lower() if naturaleza_col else ''
                     
                     self.config[operacion] = {
                         'observaciones_template': observaciones_template,
                         'clave_prefix': clave_prefix,
-                        'cuenta_contable': cuenta_contable
+                        'cuenta_contable': cuenta_contable,
+                        'naturaleza': naturaleza
                     }
                     
                 except Exception as e:
@@ -305,6 +308,26 @@ class ExcelConfigLoader:
             if operacion_norm in key or key in operacion_norm:
                 return self.config[key]
         
+        return None
+    
+    def get_naturaleza_for_operation(self, operacion: str) -> Optional[str]:
+        """
+        Obtiene la naturaleza (debito/credito) para una operación específica.
+        
+        Args:
+            operacion: Nombre de la operación (ej: 'COMISION', 'DEPOSITO')
+            
+        Returns:
+            'debito', 'credito' o None si no está configurado
+        """
+        config = self.get_operation_config(operacion)
+        if config and 'naturaleza' in config:
+            naturaleza = config['naturaleza'].lower()
+            # Normalizar valores
+            if 'debit' in naturaleza or 'débit' in naturaleza:
+                return 'debito'
+            elif 'credit' in naturaleza or 'crédit' in naturaleza:
+                return 'credito'
         return None
     
     def format_observaciones(self, operacion: str, fecha: str, tipo_transaccion: str = '') -> str:
