@@ -183,34 +183,35 @@ class ExcelConfigLoader:
             logger.warning(f"Error leyendo cuenta bancaria de D1: {e}")
     
     def _load_unidad_negocio(self):
-        """Lee el ID de unidad de negocio desde la celda L1 de la hoja Configuración."""
+        """Lee el ID de unidad de negocio desde la celda M1 de la hoja Configuración."""
         try:
-            # Leer la hoja sin header para obtener la celda L1
+            # Leer la hoja sin header para obtener la celda M1
             df_raw = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
             
-            # La celda L1 está en fila 0, columna 11 (índice 11, ya que A=0, B=1, ..., L=11)
-            if len(df_raw) > 0 and len(df_raw.columns) > 11:
-                unidad_valor = df_raw.iloc[0, 11]  # L1 = fila 0, columna 11
+            # La celda M1 está en fila 0, columna 12 (índice 12, ya que A=0, B=1, ..., M=12)
+            if len(df_raw) > 0 and len(df_raw.columns) > 12:
+                unidad_valor = df_raw.iloc[0, 12]  # M1 = fila 0, columna 12
                 unidad_str = str(unidad_valor).strip()
                 
-                # Validar que sea un número
+                logger.info(f"[DEBUG] Valor crudo en M1: '{unidad_str}'")
+                
+                # Validar que tenga contenido
                 if unidad_str and unidad_str.lower() != 'nan' and unidad_str != '':
-                    # Extraer solo el valor numérico
+                    # Extraer solo el valor numérico (ej: "Selección: 2" -> "2")
                     import re
-                    match = re.search(r'\d+', unidad_str)
+                    match = re.search(r'(\d+)', unidad_str)
                     if match:
-                        self.unidad_negocio_id = match.group()
-                        logger.info(f"ID de unidad de negocio configurado (L1): {self.unidad_negocio_id}")
+                        self.unidad_negocio_id = match.group(1)
+                        logger.info(f"ID de unidad de negocio configurado (M1): {self.unidad_negocio_id}")
                     else:
-                        self.unidad_negocio_id = unidad_str
-                        logger.info(f"ID de unidad de negocio configurado (L1): {self.unidad_negocio_id}")
+                        logger.warning(f"[DEBUG] No se pudo extraer número de: '{unidad_str}'")
                 else:
-                    logger.info("Celda L1 vacía, se usará selección automática de unidad de negocio")
+                    logger.info("Celda M1 vacía, se usará selección automática de unidad de negocio")
             else:
-                logger.info("No se pudo leer celda L1, se usará selección automática")
+                logger.info("No se pudo leer celda M1, se usará selección automática")
                 
         except Exception as e:
-            logger.warning(f"Error leyendo unidad de negocio de L1: {e}")
+            logger.warning(f"Error leyendo unidad de negocio de M1: {e}")
     
     def _load_credentials(self):
         """Lee usuario y contraseña desde celdas S3 y S4 de la hoja Configuración."""
@@ -270,70 +271,53 @@ class ExcelConfigLoader:
         """
         Lee el mapeo de cuentas de depósito por unidad de negocio y tipo de transacción.
         
-        Nueva estructura:
-        - Columna M: Unidad de Negocio (celda M1 tiene el ID seleccionado)
-        - Columna N: Cuentas para TDD (Tarjeta Débito) - índice 13
-        - Columna O: Cuentas para TDC (Tarjeta Crédito) - índice 14  
-        - Columna P: Cuentas para TDCA (American Express) - índice 15
-        
-        Filas 4-5 (índices 3-4) contienen las cuentas por unidad de negocio
+        Estructura según Excel actual:
+        - Columna M (12): Unidad de Negocio (fila 1=header, filas 2-9=unidades con ID)
+        - Columna N (13): Tarjeta Débito (TDD)
+        - Columna O (14): Tarjeta Crédito (TDC)
+        - Columna P (15): American Express (TDCA)
         """
         self.cuentas_deposito_por_unidad = {}
         self.cuentas_por_tipo = {
-            'TDD': {},   # Columna N - índice 13
-            'TDC': {},   # Columna O - índice 14
-            'TDCA': {}   # Columna P - índice 15
+            'TDD': {},   # Columna N
+            'TDC': {},   # Columna O
+            'TDCA': {}   # Columna P
         }
         
         try:
-            # Leer la hoja con header=None para acceder por índice de columna
             df = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
+            logger.info(f"[DEBUG] Cargando cuentas. Shape: {df.shape}, columnas: {len(df.columns)}")
             
-            logger.info(f"[DEBUG] Cargando cuentas de depósito. Shape: {df.shape}")
-            
-            # Verificar que tenemos suficientes columnas (M=12, N=13, O=14, P=15)
             if len(df.columns) < 16:
-                logger.warning(f"[DEBUG] No hay suficientes columnas. Se necesitan al menos 16, hay {len(df.columns)}")
+                logger.warning(f"[DEBUG] Columnas insuficientes. Hay {len(df.columns)}, se necesitan 16")
                 return
             
-            # Buscar ID de unidad seleccionado en celda M1 (fila 0, columna 12)
-            unidad_seleccionada = None
-            if len(df) > 0 and len(df.columns) > 12:
-                m1_valor = df.iloc[0, 12]  # M1 = fila 0, columna 12
-                m1_str = str(m1_valor).strip() if pd.notna(m1_valor) else ''
-                import re
-                match = re.search(r'\d+', m1_str)
-                if match:
-                    unidad_seleccionada = match.group()
-                    logger.info(f"[DEBUG] Unidad de negocio seleccionada en M1: {unidad_seleccionada}")
-            
-            # Leer las filas de unidades (filas 3-4 en Excel = índices 3-4 en DataFrame)
-            # Fila 4: Unidad 2 (Parque Observatoric)
-            # Fila 5: Unidad 3 (Club Playa)
-            filas_unidades = {
-                3: '2',  # Fila 4 en Excel
-                4: '3'   # Fila 5 en Excel
-            }
-            
-            for fila_idx, unidad_id in filas_unidades.items():
-                if fila_idx >= len(df):
+            # Buscar en todas las filas (empezando desde fila 2 en Excel = índice 1)
+            for fila_idx in range(1, min(len(df), 20)):  # Leer hasta 20 filas
+                # Columna M (12) = ID de unidad
+                id_val = df.iloc[fila_idx, 12]
+                
+                if pd.isna(id_val):
                     continue
-                    
-                # Leer columna N (13) - TDD
+                
+                id_str = str(id_val).strip()
+                import re
+                match = re.search(r'(\d+)', id_str)
+                if not match:
+                    continue
+                
+                unidad_id = match.group(1)
+                
+                # Leer cuentas de columnas N(13), O(14), P(15)
                 tdd_val = df.iloc[fila_idx, 13] if len(df.columns) > 13 else None
-                # Leer columna O (14) - TDC
                 tdc_val = df.iloc[fila_idx, 14] if len(df.columns) > 14 else None
-                # Leer columna P (15) - TDCA
                 tdca_val = df.iloc[fila_idx, 15] if len(df.columns) > 15 else None
                 
-                # Extraer números de cuenta del texto
                 def extraer_cuenta(valor):
                     if pd.isna(valor):
                         return None
                     val_str = str(valor).strip()
-                    if val_str and val_str.lower() != 'nan':
-                        # Buscar patrón de cuenta contable (números con puntos)
-                        import re
+                    if val_str and val_str.lower() != 'nan' and val_str != '':
                         match = re.search(r'(\d{4,}(?:\.\d+)?)', val_str)
                         if match:
                             return match.group(1)
@@ -345,23 +329,18 @@ class ExcelConfigLoader:
                 
                 if tdd_cuenta:
                     self.cuentas_por_tipo['TDD'][unidad_id] = tdd_cuenta
-                    logger.info(f"[DEBUG] Cuenta TDD para unidad {unidad_id}: {tdd_cuenta}")
+                    logger.info(f"[DEBUG] TDD Unidad {unidad_id}: {tdd_cuenta}")
                 
                 if tdc_cuenta:
                     self.cuentas_por_tipo['TDC'][unidad_id] = tdc_cuenta
-                    logger.info(f"[DEBUG] Cuenta TDC para unidad {unidad_id}: {tdc_cuenta}")
+                    logger.info(f"[DEBUG] TDC Unidad {unidad_id}: {tdc_cuenta}")
                 
                 if tdca_cuenta:
                     self.cuentas_por_tipo['TDCA'][unidad_id] = tdca_cuenta
-                    logger.info(f"[DEBUG] Cuenta TDCA para unidad {unidad_id}: {tdca_cuenta}")
+                    logger.info(f"[DEBUG] TDCA Unidad {unidad_id}: {tdca_cuenta}")
             
-            logger.info(f"Cuentas de depósito cargadas: TDD={len(self.cuentas_por_tipo['TDD'])}, TDC={len(self.cuentas_por_tipo['TDC'])}, TDCA={len(self.cuentas_por_tipo['TDCA'])}")
-            
-            # También guardar en el formato anterior para compatibilidad
-            if unidad_seleccionada:
-                for tipo in ['TDD', 'TDC', 'TDCA']:
-                    if unidad_seleccionada in self.cuentas_por_tipo[tipo]:
-                        self.cuentas_deposito_por_unidad[unidad_id] = self.cuentas_por_tipo[tipo][unidad_seleccionada]
+            total = sum(len(v) for v in self.cuentas_por_tipo.values())
+            logger.info(f"Cuentas cargadas: TDD={len(self.cuentas_por_tipo['TDD'])}, TDC={len(self.cuentas_por_tipo['TDC'])}, TDCA={len(self.cuentas_por_tipo['TDCA'])}, Total={total}")
                         
         except Exception as e:
             logger.warning(f"Error cargando cuentas de depósito por unidad: {e}")
