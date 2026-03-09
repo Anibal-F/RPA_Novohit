@@ -42,6 +42,62 @@ class NovohitTransformer:
                 return config_account
         return self._fallback_account_id
         
+    def _extract_tipo_transaccion(self, concepto: str) -> str:
+        """
+        Extrae el tipo de transacción del concepto (TDC, TDD, TDC AMEX).
+        
+        Para Banregio: busca "TDC", "TDD", "TDC AMEX" en el concepto
+        Para BBVA: busca "VENTAS DEBIDO" (TDD), "VENTAS CREDITO" (TDC), 
+                   "VENTA INTL. AMEX" o "VENTA NAL. AMEX" (TDC AMEX)
+        
+        Args:
+            concepto: Texto del concepto del estado de cuenta
+            
+        Returns:
+            Tipo de transacción (TDC, TDD, TDC AMEX) o string vacío
+        """
+        concepto_upper = concepto.upper()
+        
+        if self.bank_name.upper() == 'BANREGIO':
+            # Banregio: buscar TDC AMEX primero (más específico que solo TDC)
+            if 'TDC AMEX' in concepto_upper or 'AMEX' in concepto_upper:
+                return 'TDC AMEX'
+            elif 'TDD' in concepto_upper:
+                return 'TDD'
+            elif 'TDC' in concepto_upper:
+                return 'TDC'
+                
+        elif self.bank_name.upper() == 'BBVA':
+            # BBVA: detectar según patrones específicos
+            # VENTA INTL. AMEX o VENTA NAL. AMEX
+            if 'AMEX' in concepto_upper:
+                return 'TDC AMEX'
+            # VENTAS DEBIDO
+            elif 'DEBIDO' in concepto_upper:
+                return 'TDD'
+            # VENTAS CREDITO
+            elif 'CREDITO' in concepto_upper:
+                return 'TDC'
+        
+        return ''
+    
+    def _get_tipo_transaccion_suffix(self, tipo_transaccion: str) -> str:
+        """
+        Obtiene el sufijo para el documento según el tipo de transacción.
+        
+        Args:
+            tipo_transaccion: Tipo de transacción (TDC, TDD, TDC AMEX)
+            
+        Returns:
+            Sufijo para el documento (DC, DD, DCA) o string vacío
+        """
+        suffix_map = {
+            'TDC': 'DC',
+            'TDD': 'DD',
+            'TDC AMEX': 'DCA'
+        }
+        return suffix_map.get(tipo_transaccion, '')
+        
     def transform_record(self, record: Dict, index: int = 0, doc_counter: Dict = None, type_date_counts: Dict = None) -> Optional[Dict]:
         """
         Transforma un registro bancario a formato Novohit.
@@ -95,16 +151,40 @@ class NovohitTransformer:
         current_seq = doc_counter[counter_key]
         total_count = type_date_counts.get(counter_key, 1) if type_date_counts else 1
         
+        # Extraer tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
+        tipo_transaccion = ''
+        if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+            tipo_transaccion = self._extract_tipo_transaccion(concepto)
+        
         # Generar observaciones y clave según configuración
         if self.config_loader:
-            notes = self.config_loader.format_observaciones(operacion_nombre, fecha)
+            # Para depósitos, pasar el tipo de transacción para observaciones dinámicas
+            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+                notes = self.config_loader.format_observaciones(
+                    operacion_nombre, fecha, tipo_transaccion=tipo_transaccion
+                )
+            else:
+                notes = self.config_loader.format_observaciones(operacion_nombre, fecha)
             # Generar documento con sufijo secuencial (01, 02, etc.)
-            no_document = self._generate_sequential_document(
-                operacion_nombre, fecha, current_seq, total_count
-            )
+            # Para depósitos, pasar tipo_transaccion para generar clave dinámica
+            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+                no_document = self._generate_sequential_document(
+                    operacion_nombre, fecha, current_seq, total_count, tipo_transaccion
+                )
+            else:
+                no_document = self._generate_sequential_document(
+                    operacion_nombre, fecha, current_seq, total_count
+                )
         else:
             # Fallback a formato anterior
-            notes = f"{mapping['descripcion']} - Ref: {record.get('referencia', '')}"
+            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+                # Observaciones dinámicas para depósitos (Banregio y BBVA)
+                if tipo_transaccion:
+                    notes = f"VENTAS {tipo_transaccion} DEL {fecha}"
+                else:
+                    notes = f"Deposito Bancario del dia: {fecha}"
+            else:
+                notes = f"{mapping['descripcion']} - Ref: {record.get('referencia', '')}"
             no_document = self._generate_document_number(record, index, doc_counter)
         
         # Construir registro para Novohit
@@ -240,18 +320,24 @@ class NovohitTransformer:
         
         return f"{prefix}-{fecha_clean}-{unique_seq}"
     
-    def _generate_sequential_document(self, operacion_nombre: str, fecha: str, current_seq: int, total_count: int) -> str:
+    def _generate_sequential_document(self, operacion_nombre: str, fecha: str, current_seq: int, 
+                                        total_count: int, tipo_transaccion: str = '') -> str:
         """
         Genera un número de documento con sufijo secuencial.
         
         Formato: [PREFIX]-[FECHA]-[SECUENCIA]
         Ejemplo: CB-23022026-01, CB-23022026-02, ..., CB-23022026-15
         
+        Para DEPOSITOS con tipo de transacción:
+        Formato: [PREFIX][TIPO_SUFIJO]-[FECHA]-[SECUENCIA]
+        Ejemplo: TDC-05032026-01, TDD-05032026-01, TDCA-05032026-01
+        
         Args:
             operacion_nombre: Nombre de la operación (ej: 'COMISION')
             fecha: Fecha en formato DD/MM/YYYY
             current_seq: Número secuencial actual (1-based)
             total_count: Total de registros de este tipo/fecha
+            tipo_transaccion: Tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
             
         Returns:
             String con el número de documento formateado
@@ -273,6 +359,12 @@ class NovohitTransformer:
                 prefix = "CB"
             else:
                 prefix = "DOC"
+        
+        # Si es DEPOSITO y tenemos tipo de transacción, agregar sufijo al prefijo
+        if operacion_nombre.upper() == 'DEPOSITO' and tipo_transaccion:
+            tipo_suffix = self._get_tipo_transaccion_suffix(tipo_transaccion)
+            if tipo_suffix:
+                prefix = f"{prefix}{tipo_suffix}"
         
         # Limpiar fecha
         fecha_clean = fecha.replace('/', '').replace('-', '')

@@ -250,18 +250,39 @@ class ExcelConfigLoader:
         
         return None
     
-    def format_observaciones(self, operacion: str, fecha: str) -> str:
+    def format_observaciones(self, operacion: str, fecha: str, tipo_transaccion: str = '') -> str:
         """
         Formatea las observaciones según el template de configuración.
         
         Args:
             operacion: Tipo de operación
             fecha: Fecha en formato DD/MM/YYYY
+            tipo_transaccion: Tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
             
         Returns:
             String formateado
         """
         config = self.get_operation_config(operacion)
+        
+        # Si es DEPOSITO y tenemos tipo de transacción, construir observaciones dinámicas
+        if operacion.upper() == 'DEPOSITO' and tipo_transaccion:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(fecha, '%d/%m/%Y')
+                meses = {
+                    1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
+                    5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
+                    9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+                }
+                fecha_formateada = f"{dt.day} DE {meses[dt.month]} DEL {dt.year}"
+                
+                # Usar template del Excel o default "VENTAS"
+                template = config.get('observaciones_template', 'VENTAS') if config else 'VENTAS'
+                return f"{template} {tipo_transaccion} DEL {fecha_formateada}"
+            except Exception as e:
+                logging.warning(f"Error formateando fecha para observaciones: {e}")
+                template = config.get('observaciones_template', 'VENTAS') if config else 'VENTAS'
+                return f"{template} {tipo_transaccion} DEL {fecha}"
         
         if not config:
             # Fallback: usar formato genérico
