@@ -72,11 +72,11 @@ class NovohitTransformer:
             # VENTA INTL. AMEX o VENTA NAL. AMEX
             if 'AMEX' in concepto_upper:
                 return 'TDC AMEX'
-            # VENTAS DEBIDO
-            elif 'DEBIDO' in concepto_upper:
+            # VENTAS DEBITO / VENTAS DEBIDO
+            elif 'DEBITO' in concepto_upper or 'DEBIDO' in concepto_upper:
                 return 'TDD'
-            # VENTAS CREDITO
-            elif 'CREDITO' in concepto_upper:
+            # VENTAS CREDITO / VENTAS TDC INTER
+            elif 'CREDITO' in concepto_upper or 'TDC' in concepto_upper:
                 return 'TDC'
         
         return ''
@@ -152,17 +152,19 @@ class NovohitTransformer:
         total_count = type_date_counts.get(counter_key, 1) if type_date_counts else 1
         
         # Extraer tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
-        tipo_transaccion = ''
+        # Detectar primero el tipo de transaccion basado en el concepto
+        tipo_transaccion = self._extract_tipo_transaccion(concepto)
         categoria = mapping.get('categoria', '')
-        logger.info(f"  [DEBUG] Concepto: {concepto[:50]}, operacion_id: {operacion_id}, categoria: {categoria}")
-        if operacion_id == '6' or categoria == 'deposito':
-            tipo_transaccion = self._extract_tipo_transaccion(concepto)
-            logger.info(f"  [DEBUG] Tipo transaccion detectado: {tipo_transaccion} para banco: {self.bank_name}")
+        
+        # Si detectamos tipo_transaccion, es un deposito sin importar el mapeo
+        es_deposito = (operacion_id == '6' or categoria == 'deposito' or tipo_transaccion != '')
+        
+        logger.info(f"  [DEBUG] Concepto: {concepto[:50]}, operacion_id: {operacion_id}, categoria: {categoria}, tipo_transaccion: {tipo_transaccion}, es_deposito: {es_deposito}")
         
         # Generar observaciones y clave según configuración
         if self.config_loader:
             # Para depósitos, pasar el tipo de transacción para observaciones dinámicas
-            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+            if es_deposito:
                 notes = self.config_loader.format_observaciones(
                     operacion_nombre, fecha, tipo_transaccion=tipo_transaccion
                 )
@@ -170,7 +172,7 @@ class NovohitTransformer:
                 notes = self.config_loader.format_observaciones(operacion_nombre, fecha)
             # Generar documento con sufijo secuencial (01, 02, etc.)
             # Para depósitos, pasar tipo_transaccion para generar clave dinámica
-            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+            if es_deposito:
                 no_document = self._generate_sequential_document(
                     operacion_nombre, fecha, current_seq, total_count, tipo_transaccion
                 )
@@ -180,7 +182,7 @@ class NovohitTransformer:
                 )
         else:
             # Fallback a formato anterior
-            if operacion_id == '6' or mapping.get('categoria') == 'deposito':
+            if es_deposito:
                 # Observaciones dinámicas para depósitos (Banregio y BBVA)
                 if tipo_transaccion:
                     notes = f"VENTAS {tipo_transaccion} DEL {fecha}"
@@ -363,9 +365,9 @@ class NovohitTransformer:
             else:
                 prefix = "DOC"
         
-        # Si es DEPOSITO y tenemos tipo de transacción, agregar sufijo al prefijo
+        # Si tenemos tipo de transacción (TDC/TDD/TDCA), agregar sufijo al prefijo
         logger.info(f"  [DEBUG] Generando documento: operacion={operacion_nombre}, prefix={prefix}, tipo_transaccion={tipo_transaccion}")
-        if operacion_nombre.upper() == 'DEPOSITO' and tipo_transaccion:
+        if tipo_transaccion:
             tipo_suffix = self._get_tipo_transaccion_suffix(tipo_transaccion)
             logger.info(f"  [DEBUG] Sufijo generado: {tipo_suffix}")
             if tipo_suffix:
