@@ -266,57 +266,60 @@ class ExcelConfigLoader:
     def _load_cuentas_deposito_por_unidad(self):
         """
         Lee el mapeo de cuentas de depósito por unidad de negocio.
-        Columnas: K=ID Unidad, L=Nombre Unidad, M=Cuenta Depósitos
+        Busca columnas por nombre: ID, Unidad de Negocio, Cuenta Depósitos
         """
         self.cuentas_deposito_por_unidad = {}
         try:
-            # Leer la hoja sin header
-            df_raw = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
+            # Leer la hoja con header para poder buscar por nombre de columna
+            df = pd.read_excel(self.file_path, sheet_name='Configuración')
             
-            # Buscar la fila donde empieza la tabla de unidades de negocio
-            # Normalmente está después de los headers de operaciones
-            for idx, row in df_raw.iterrows():
-                # Buscar fila que tenga "Unidad de Negocio" o similar en columna L (11)
-                if len(row) > 11:
-                    col_l_val = str(row.iloc[11]).strip().upper() if pd.notna(row.iloc[11]) else ''
-                    if 'UNIDAD' in col_l_val and 'NEGOCIO' in col_l_val:
-                        # Encontramos el header, las unidades empiezan en la siguiente fila
-                        unidades_start_row = idx + 1
-                        break
-            else:
-                # Si no encontramos header, asumir que empieza en fila 1 (fila 2 en Excel)
-                unidades_start_row = 1
+            logger.info(f"[DEBUG] Columnas encontradas en Configuración: {list(df.columns)}")
             
-            # Leer las unidades de negocio
-            for idx in range(unidades_start_row, len(df_raw)):
-                if len(df_raw.columns) > 12:  # Necesitamos columnas K(10), L(11), M(12)
-                    # Columna K (10) = ID Unidad
-                    # Columna L (11) = Nombre Unidad  
-                    # Columna M (12) = Cuenta Depósitos
-                    id_unidad = df_raw.iloc[idx, 10]  # Columna K
-                    nombre_unidad = df_raw.iloc[idx, 11]  # Columna L
-                    cuenta_deposito = df_raw.iloc[idx, 12]  # Columna M
-                    
-                    # Validar que tenemos datos
-                    id_str = str(id_unidad).strip() if pd.notna(id_unidad) else ''
-                    cuenta_str = str(cuenta_deposito).strip() if pd.notna(cuenta_deposito) else ''
-                    
-                    if id_str and id_str.lower() != 'nan' and cuenta_str and cuenta_str.lower() != 'nan':
-                        # Extraer solo el número de ID
-                        import re
-                        match = re.search(r'\d+', id_str)
-                        if match:
-                            unidad_id = match.group()
-                            self.cuentas_deposito_por_unidad[unidad_id] = cuenta_str
-                            logger.info(f"Cuenta depósito cargada: Unidad {unidad_id} ({nombre_unidad}) -> {cuenta_str}")
+            # Buscar columnas por nombre
+            id_col = self._find_column(df, ['ID', 'ID UNIDAD', 'ID_UNIDAD'])
+            unidad_col = self._find_column(df, ['UNIDAD DE NEGOCIO', 'UNIDAD'])
+            cuenta_col = self._find_column(df, ['CUENTA DEPOSITOS', 'CUENTA DEPÓSITOS', 'CUENTA_DEPOSITOS'])
+            
+            logger.info(f"[DEBUG] Columnas de depósito: ID={id_col}, Unidad={unidad_col}, Cuenta={cuenta_col}")
+            
+            if not id_col or not cuenta_col:
+                logger.warning("[DEBUG] No se encontraron columnas de ID o Cuenta Depósitos")
+                return
+            
+            # Procesar filas
+            for _, row in df.iterrows():
+                id_val = row.get(id_col)
+                cuenta_val = row.get(cuenta_col)
+                unidad_val = row.get(unidad_col, '')
+                
+                # Convertir a string y limpiar
+                id_str = str(id_val).strip() if pd.notna(id_val) else ''
+                cuenta_str = str(cuenta_val).strip() if pd.notna(cuenta_val) else ''
+                unidad_nombre = str(unidad_val).strip() if pd.notna(unidad_val) else ''
+                
+                logger.info(f"[DEBUG] Procesando fila: ID='{id_str}', Cuenta='{cuenta_str}', Unidad='{unidad_nombre}'")
+                
+                # Validar que tenemos datos válidos
+                if id_str and id_str.lower() != 'nan' and cuenta_str and cuenta_str.lower() != 'nan':
+                    # Extraer solo el número de ID
+                    import re
+                    match = re.search(r'\d+', id_str)
+                    if match:
+                        unidad_id = match.group()
+                        self.cuentas_deposito_por_unidad[unidad_id] = cuenta_str
+                        logger.info(f"Cuenta depósito cargada: Unidad {unidad_id} ({unidad_nombre}) -> {cuenta_str}")
             
             if self.cuentas_deposito_por_unidad:
                 logger.info(f"Cuentas de depósito por unidad cargadas: {len(self.cuentas_deposito_por_unidad)}")
+                for uid, cuenta in self.cuentas_deposito_por_unidad.items():
+                    logger.info(f"  - Unidad {uid}: {cuenta}")
             else:
-                logger.info("No se encontraron cuentas de depósito por unidad de negocio")
+                logger.warning("No se encontraron cuentas de depósito por unidad de negocio")
                 
         except Exception as e:
             logger.warning(f"Error cargando cuentas de depósito por unidad: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
             self.cuentas_deposito_por_unidad = {}
     
     def get_bank_name(self) -> Optional[str]:
