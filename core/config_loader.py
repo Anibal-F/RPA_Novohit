@@ -60,6 +60,8 @@ class ExcelConfigLoader:
             cuenta_col = self._find_column(df, ['CUENTA CONTABLE', 'CUENTA', 'CONTABLE'])
             naturaleza_col = self._find_column(df, ['NATURALEZA', 'NATURALEZA (DEBITO/CREDITO)', 'DEBITO/CREDITO'])
             
+            logger.info(f"[DEBUG] Columnas encontradas: Operacion={operacion_col}, Naturaleza={naturaleza_col}")
+            
             if not operacion_col:
                 logger.warning("No se encontró columna de operación en Configuración")
                 return {}
@@ -90,7 +92,8 @@ class ExcelConfigLoader:
             logger.info(f"Configuración procesada: {len(self.config)} operaciones")
             for op, cfg in self.config.items():
                 cuenta = cfg.get('cuenta_contable', 'N/A')
-                logger.info(f"  - {op}: clave={cfg['clave_prefix']}, cuenta={cuenta[:30] if cuenta else 'N/A'}, obs={cfg['observaciones_template'][:30]}...")
+                nat = cfg.get('naturaleza', 'N/A')
+                logger.info(f"  - {op}: clave={cfg['clave_prefix']}, cuenta={cuenta[:30] if cuenta else 'N/A'}, nat={nat}, obs={cfg['observaciones_template'][:30]}...")
             
             return self.config
             
@@ -427,13 +430,17 @@ class ExcelConfigLoader:
             'debito', 'credito' o None si no está configurado
         """
         config = self.get_operation_config(operacion)
+        logger.info(f"[DEBUG] get_naturaleza_for_operation({operacion}): config={config}")
         if config and 'naturaleza' in config:
-            naturaleza = config['naturaleza'].lower()
+            naturaleza_raw = config['naturaleza']
+            naturaleza = naturaleza_raw.lower()
+            logger.info(f"[DEBUG] Naturaleza raw: '{naturaleza_raw}', lower: '{naturaleza}'")
             # Normalizar valores
             if 'debit' in naturaleza or 'débit' in naturaleza:
                 return 'debito'
             elif 'credit' in naturaleza or 'crédit' in naturaleza:
                 return 'credito'
+        logger.info(f"[DEBUG] No se encontró naturaleza para {operacion}")
         return None
     
     def format_observaciones(self, operacion: str, fecha: str, tipo_transaccion: str = '') -> str:

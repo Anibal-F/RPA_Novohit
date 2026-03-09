@@ -166,20 +166,29 @@ class AccountingEntryHandler:
     def _get_naturaleza(self, record: Dict, config_loader) -> str:
         """Obtiene la naturaleza (debito/credito) según el tipo de operación."""
         if not config_loader:
+            logger.warning("  [DEBUG] No hay config_loader, usando naturaleza por defecto")
             return 'debit'  # Default
         
         # Obtener el nombre de la operación
         operacion_id = record.get('id_tp_operation')
         operacion_nombre = self._get_operacion_nombre(operacion_id)
+        logger.info(f"  [DEBUG] Buscando naturaleza para: {operacion_nombre}")
         
         # Buscar en configuración del Excel
         naturaleza = config_loader.get_naturaleza_for_operation(operacion_nombre)
+        logger.info(f"  [DEBUG] Naturaleza del Excel: {naturaleza}")
+        
         if naturaleza:
-            return naturaleza
+            resultado = 'credit' if naturaleza == 'credito' else 'debit'
+            logger.info(f"  [DEBUG] Usando naturaleza del Excel: {resultado}")
+            return resultado
         
         # Fallback: según el tipo de operación por defecto
         if operacion_id == '6' or record.get('categoria') == 'deposito':
+            logger.info(f"  [DEBUG] Usando naturaleza por defecto: credit (para deposito)")
             return 'credit'  # Depósitos son crédito por defecto
+        
+        logger.info(f"  [DEBUG] Usando naturaleza por defecto: debit")
         return 'debit'  # Comisiones e IVA son débito por defecto
     
     def _get_unidad_negocio_id(self, config_loader) -> Optional[str]:
