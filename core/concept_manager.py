@@ -128,6 +128,7 @@ class ConceptManagerWindow:
         # Colorear filas
         self.tree.tag_configure("comision", background="#dbeafe")  # Azul claro
         self.tree.tag_configure("iva", background="#dcfce7")  # Verde claro
+        self.tree.tag_configure("deposito", background="#fef3c7")  # Amarillo claro
         
     def _add_concept(self):
         """Abre dialogo para agregar nuevo concepto."""
@@ -195,13 +196,18 @@ class AddConceptDialog:
         
         tk.Label(self.top, text="Categoria:", anchor="w").pack(fill=tk.X, padx=10)
         self.categoria_var = tk.StringVar(value="comision")
-        ttk.Combobox(self.top, textvariable=self.categoria_var, 
-                     values=["comision", "iva"], state="readonly").pack(fill=tk.X, padx=10, pady=5)
+        self.categoria_combo = ttk.Combobox(self.top, textvariable=self.categoria_var, 
+                     values=["comision", "iva", "deposito"], state="readonly")
+        self.categoria_combo.pack(fill=tk.X, padx=10, pady=5)
         
         tk.Label(self.top, text="ID Operacion Novohit:", anchor="w").pack(fill=tk.X, padx=10)
-        self.id_op_var = tk.StringVar(value="7")
-        ttk.Combobox(self.top, textvariable=self.id_op_var, 
-                     values=["7 (COMISION)", "8 (IVA)"], state="readonly").pack(fill=tk.X, padx=10, pady=5)
+        self.id_op_var = tk.StringVar(value="7 (COMISION)")
+        self.id_op_combo = ttk.Combobox(self.top, textvariable=self.id_op_var, 
+                     values=["6 (DEPOSITO)", "7 (COMISION)", "8 (IVA)"], state="readonly")
+        self.id_op_combo.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Vincular categoria con ID de operacion automaticamente
+        self.categoria_var.trace_add('write', self._on_categoria_change)
         
         tk.Label(self.top, text="Descripcion (para Novohit):", anchor="w").pack(fill=tk.X, padx=10)
         self.desc_var = tk.StringVar()
@@ -214,6 +220,16 @@ class AddConceptDialog:
         tk.Button(btn_frame, text="Guardar", bg="#16a34a", fg="white",
                   command=self._save).pack(side=tk.RIGHT, padx=5)
         tk.Button(btn_frame, text="Cancelar", command=self.top.destroy).pack(side=tk.RIGHT, padx=5)
+        
+    def _on_categoria_change(self, *args):
+        """Actualiza el ID de operacion segun la categoria seleccionada."""
+        categoria = self.categoria_var.get()
+        if categoria == "deposito":
+            self.id_op_var.set("6 (DEPOSITO)")
+        elif categoria == "iva":
+            self.id_op_var.set("8 (IVA)")
+        else:  # comision
+            self.id_op_var.set("7 (COMISION)")
         
     def _save(self):
         """Guarda el nuevo concepto."""
@@ -255,15 +271,22 @@ class EditConceptDialog:
         
         tk.Label(self.top, text="Categoria:", anchor="w").pack(fill=tk.X, padx=10)
         self.categoria_var = tk.StringVar(value=mapping.get("categoria", "comision"))
-        ttk.Combobox(self.top, textvariable=self.categoria_var, 
-                     values=["comision", "iva"], state="readonly").pack(fill=tk.X, padx=10, pady=5)
+        self.categoria_combo = ttk.Combobox(self.top, textvariable=self.categoria_var, 
+                     values=["comision", "iva", "deposito"], state="readonly")
+        self.categoria_combo.pack(fill=tk.X, padx=10, pady=5)
         
         tk.Label(self.top, text="ID Operacion Novohit:", anchor="w").pack(fill=tk.X, padx=10)
         id_op = mapping.get("id_tp_operation", "7")
-        id_op_text = f"{id_op} ({'IVA' if id_op == '8' else 'COMISION'})"
+        # Mapear ID a texto completo
+        id_op_map = {"6": "6 (DEPOSITO)", "7": "7 (COMISION)", "8": "8 (IVA)"}
+        id_op_text = id_op_map.get(id_op, f"{id_op} (COMISION)")
         self.id_op_var = tk.StringVar(value=id_op_text)
-        ttk.Combobox(self.top, textvariable=self.id_op_var, 
-                     values=["7 (COMISION)", "8 (IVA)"], state="readonly").pack(fill=tk.X, padx=10, pady=5)
+        self.id_op_combo = ttk.Combobox(self.top, textvariable=self.id_op_var, 
+                     values=["6 (DEPOSITO)", "7 (COMISION)", "8 (IVA)"], state="readonly")
+        self.id_op_combo.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Vincular categoria con ID de operacion automaticamente
+        self.categoria_var.trace_add('write', self._on_categoria_change)
         
         tk.Label(self.top, text="Descripcion (para Novohit):", anchor="w").pack(fill=tk.X, padx=10)
         self.desc_var = tk.StringVar(value=mapping.get("descripcion", ""))
@@ -276,6 +299,16 @@ class EditConceptDialog:
         tk.Button(btn_frame, text="Guardar Cambios", bg="#16a34a", fg="white",
                   command=self._save).pack(side=tk.RIGHT, padx=5)
         tk.Button(btn_frame, text="Cancelar", command=self.top.destroy).pack(side=tk.RIGHT, padx=5)
+        
+    def _on_categoria_change(self, *args):
+        """Actualiza el ID de operacion segun la categoria seleccionada."""
+        categoria = self.categoria_var.get()
+        if categoria == "deposito":
+            self.id_op_var.set("6 (DEPOSITO)")
+        elif categoria == "iva":
+            self.id_op_var.set("8 (IVA)")
+        else:  # comision
+            self.id_op_var.set("7 (COMISION)")
         
     def _save(self):
         """Guarda los cambios."""
