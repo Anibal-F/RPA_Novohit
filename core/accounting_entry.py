@@ -165,31 +165,27 @@ class AccountingEntryHandler:
     
     def _get_naturaleza(self, record: Dict, config_loader) -> str:
         """Obtiene la naturaleza (debito/credito) según el tipo de operación."""
-        if not config_loader:
-            logger.warning("  [DEBUG] No hay config_loader, usando naturaleza por defecto")
-            return 'debit'  # Default
         
         # Obtener el nombre de la operación
         operacion_id = record.get('id_tp_operation')
         operacion_nombre = self._get_operacion_nombre(operacion_id)
-        logger.info(f"  [DEBUG] Buscando naturaleza para: {operacion_nombre}")
         
-        # Buscar en configuración del Excel
-        naturaleza = config_loader.get_naturaleza_for_operation(operacion_nombre)
-        logger.info(f"  [DEBUG] Naturaleza del Excel: {naturaleza}")
-        
-        if naturaleza:
-            resultado = 'credit' if naturaleza == 'credito' else 'debit'
-            logger.info(f"  [DEBUG] Usando naturaleza del Excel: {resultado}")
-            return resultado
-        
-        # Fallback: según el tipo de operación por defecto
+        # FALLBACK PRIORITARIO: Los depósitos (ID 6) SIEMPRE son crédito
         if operacion_id == '6' or record.get('categoria') == 'deposito':
-            logger.info(f"  [DEBUG] Usando naturaleza por defecto: credit (para deposito)")
-            return 'credit'  # Depósitos son crédito por defecto
+            logger.info(f"  [DEBUG] Es depósito (ID={operacion_id}), forzando naturaleza: CREDITO")
+            return 'credit'
         
-        logger.info(f"  [DEBUG] Usando naturaleza por defecto: debit")
-        return 'debit'  # Comisiones e IVA son débito por defecto
+        # Para comisiones e IVA, usar configuración del Excel
+        if config_loader:
+            naturaleza = config_loader.get_naturaleza_for_operation(operacion_nombre)
+            if naturaleza:
+                resultado = 'credit' if naturaleza == 'credito' else 'debit'
+                logger.info(f"  [DEBUG] Naturaleza del Excel para {operacion_nombre}: {resultado}")
+                return resultado
+        
+        # Default para comisiones/iva
+        logger.info(f"  [DEBUG] Usando naturaleza por defecto: DEBITO para {operacion_nombre}")
+        return 'debit'
     
     def _get_unidad_negocio_id(self, config_loader) -> Optional[str]:
         """Obtiene el ID de unidad de negocio desde la configuración."""
@@ -535,22 +531,27 @@ class AccountingEntryHandler:
         try:
             logger.info(f"  Seleccionando naturaleza: {tipo}")
             
+            # Según el HTML de Novohit:
+            # - name="is_debit" value="0" -> CRÉDITO
+            # - name="is_debit" value="1" -> DÉBITO
+            is_debit_value = '0' if tipo == 'credit' else '1'
+            
             # Usar JavaScript para seleccionar el radio button
             js_result = self.frame.evaluate("""
                 (params) => {
-                    const tipo = params.tipo;
+                    const isDebitValue = params.isDebitValue;
                     
-                    // Buscar por value
-                    let radio = document.querySelector('input[type="radio"][value="' + tipo + '"]');
+                    // Buscar por name="is_debit" y value específico
+                    let radio = document.querySelector('input[type="radio"][name="is_debit"][value="' + isDebitValue + '"]');
                     
-                    // Si no, buscar por texto cercano (label que contiene "Débito" o "Debit")
+                    // Si no encontramos, buscar por name que contenga 'debit'
                     if (!radio) {
-                        const labels = document.querySelectorAll('label');
-                        for (let label of labels) {
-                            const text = label.textContent.toLowerCase();
-                            if (text.includes('débito') || text.includes('debit')) {
-                                const input = label.querySelector('input[type="radio"]');
-                                if (input) {
+                        const inputs = document.querySelectorAll('input[type="radio"]');
+                        for (let input of inputs) {
+                            const name = input.name || '';
+                            if (name.includes('debit')) {
+                                // Para crédito (is_debit=0), para débito (is_debit=1)
+                                if (input.value === isDebitValue) {
                                     radio = input;
                                     break;
                                 }
@@ -558,28 +559,21 @@ class AccountingEntryHandler:
                         }
                     }
                     
-                    // Buscar por name que contenga 'debit' o 'naturaleza'
+                    // Buscar por texto de label
                     if (!radio) {
-                        const inputs = document.querySelectorAll('input[type="radio"]');
-                        for (let input of inputs) {
-                            const name = input.name || '';
-                            const id = input.id || '';
-                            if (name.includes('debit') || id.includes('debit') || 
-                                name.includes('natur') || id.includes('natur')) {
-                                radio = input;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Buscar por posición (primer radio button en la tabla de asientos)
-                    if (!radio) {
-                        const asientoForm = document.querySelector('form[name*="entries"]') || 
-                                           document.querySelector('form[action*="entries"]');
-                        if (asientoForm) {
-                            const radios = asientoForm.querySelectorAll('input[type="radio"]');
-                            if (radios.length > 0) {
-                                radio = radios[0]; // Primer radio (normalmente Débito)
+                        const labels = document.querySelectorAll('label');
+                        for (let label of labels) {
+                            const text = label.textContent.toLowerCase();
+                            const input = label.querySelector('input[type="radio"]');
+                            if (input) {
+                                if (isDebitValue === '0' && (text.includes('crédito') || text.includes('credito'))) {
+                                    radio = input;
+                                    break;
+                                }
+                                if (isDebitValue === '1' && (text.includes('débito') || text.includes('debito'))) {
+                                    radio = input;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -589,12 +583,12 @@ class AccountingEntryHandler:
                         radio.click();
                         radio.dispatchEvent(new Event('change', { bubbles: true }));
                         radio.dispatchEvent(new Event('click', { bubbles: true }));
-                        return { success: true, id: radio.id, name: radio.name, value: radio.value };
+                        return { success: true, id: radio.id, name: radio.name, value: radio.value, is_debit: isDebitValue };
                     }
                     
-                    return { success: false, error: 'Radio button no encontrado' };
+                    return { success: false, error: 'Radio button no encontrado', is_debit: isDebitValue };
                 }
-            """, {'tipo': tipo})
+            """, {'isDebitValue': is_debit_value})
             
             logger.info(f"  Resultado naturaleza: {js_result}")
             time.sleep(0.5)
