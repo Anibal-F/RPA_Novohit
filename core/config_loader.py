@@ -213,46 +213,46 @@ class ExcelConfigLoader:
             logger.warning(f"Error leyendo unidad de negocio de L1: {e}")
     
     def _load_credentials(self):
-        """Lee usuario y contraseña desde celdas P3 y P4 de la hoja Configuración."""
+        """Lee usuario y contraseña desde celdas S3 y S4 de la hoja Configuración."""
         try:
             # Leer la hoja sin header para obtener las celdas
             df_raw = pd.read_excel(self.file_path, sheet_name='Configuración', header=None)
             
-            # La columna P es la 15 (A=0, B=1, ..., P=15)
-            # P3 es fila 2 (0-indexed), columna 15
-            # P4 es fila 3 (0-indexed), columna 15
-            if len(df_raw) > 2 and len(df_raw.columns) > 15:
-                # Leer usuario de P3
-                usuario_valor = df_raw.iloc[2, 15]  # P3 = fila 2, columna 15
+            # La columna S es la 18 (A=0, B=1, ..., S=18)
+            # S3 es fila 2 (0-indexed), columna 18
+            # S4 es fila 3 (0-indexed), columna 18
+            if len(df_raw) > 2 and len(df_raw.columns) > 18:
+                # Leer usuario de S3
+                usuario_valor = df_raw.iloc[2, 18]  # S3 = fila 2, columna 18
                 usuario_str = str(usuario_valor).strip()
                 
                 if usuario_str and usuario_str.lower() != 'nan' and usuario_str != '':
                     self.novohit_username = usuario_str
-                    logger.info(f"Usuario Novohit configurado (P3): {self.novohit_username}")
+                    logger.info(f"Usuario Novohit configurado (S3): {self.novohit_username}")
                 else:
                     self.novohit_username = None
-                    logger.info("Celda P3 vacía, se usarán credenciales por defecto")
+                    logger.info("Celda S3 vacía, se usarán credenciales por defecto")
             else:
                 self.novohit_username = None
-                logger.info("No se pudo leer celda P3, se usarán credenciales por defecto")
+                logger.info("No se pudo leer celda S3, se usarán credenciales por defecto")
             
-            if len(df_raw) > 3 and len(df_raw.columns) > 15:
-                # Leer contraseña de P4
-                password_valor = df_raw.iloc[3, 15]  # P4 = fila 3, columna 15
+            if len(df_raw) > 3 and len(df_raw.columns) > 18:
+                # Leer contraseña de S4
+                password_valor = df_raw.iloc[3, 18]  # S4 = fila 3, columna 18
                 password_str = str(password_valor).strip()
                 
                 if password_str and password_str.lower() != 'nan' and password_str != '':
                     self.novohit_password = password_str
-                    logger.info(f"Contraseña Novohit configurada (P4): ****")
+                    logger.info(f"Contraseña Novohit configurada (S4): ****")
                 else:
                     self.novohit_password = None
-                    logger.info("Celda P4 vacía, se usarán credenciales por defecto")
+                    logger.info("Celda S4 vacía, se usarán credenciales por defecto")
             else:
                 self.novohit_password = None
-                logger.info("No se pudo leer celda P4, se usarán credenciales por defecto")
+                logger.info("No se pudo leer celda S4, se usarán credenciales por defecto")
                 
         except Exception as e:
-            logger.warning(f"Error leyendo credenciales de P3/P4: {e}")
+            logger.warning(f"Error leyendo credenciales de S3/S4: {e}")
             self.novohit_username = None
             self.novohit_password = None
     
