@@ -171,15 +171,11 @@ class NovohitTransformer:
             else:
                 notes = self.config_loader.format_observaciones(operacion_nombre, fecha)
             # Generar documento con sufijo secuencial (01, 02, etc.)
-            # Para depósitos, pasar tipo_transaccion para generar clave dinámica
-            if es_deposito:
-                no_document = self._generate_sequential_document(
-                    operacion_nombre, fecha, current_seq, total_count, tipo_transaccion
-                )
-            else:
-                no_document = self._generate_sequential_document(
-                    operacion_nombre, fecha, current_seq, total_count
-                )
+            # Solo los depósitos incluyen el sufijo DC/DD/DCA en el número de documento
+            # Las comisiones e IVA solo usan el prefijo sin sufijo
+            no_document = self._generate_sequential_document(
+                operacion_nombre, fecha, current_seq, total_count, tipo_transaccion, es_deposito
+            )
         else:
             # Fallback a formato anterior
             if es_deposito:
@@ -333,7 +329,8 @@ class NovohitTransformer:
         return f"{prefix}-{fecha_clean}-{unique_seq}"
     
     def _generate_sequential_document(self, operacion_nombre: str, fecha: str, current_seq: int, 
-                                        total_count: int, tipo_transaccion: str = '') -> str:
+                                        total_count: int, tipo_transaccion: str = '',
+                                        es_deposito: bool = False) -> str:
         """
         Genera un número de documento con sufijo secuencial.
         
@@ -344,12 +341,17 @@ class NovohitTransformer:
         Formato: [PREFIX][TIPO_SUFIJO]-[FECHA]-[SECUENCIA]
         Ejemplo: TDC-05032026-01, TDD-05032026-01, TDCA-05032026-01
         
+        Para COMISION e IVA COMISION (NO depósitos):
+        Formato: [PREFIX]-[FECHA]-[SECUENCIA] (sin sufijo DC/DD/DCA)
+        Ejemplo: IVA COM-05032026-01, CB-05032026-01
+        
         Args:
             operacion_nombre: Nombre de la operación (ej: 'COMISION')
             fecha: Fecha en formato DD/MM/YYYY
             current_seq: Número secuencial actual (1-based)
             total_count: Total de registros de este tipo/fecha
             tipo_transaccion: Tipo de transacción para depósitos (TDC, TDD, TDC AMEX)
+            es_deposito: True si es depósito (incluye sufijo DC/DD/DCA), False si es comisión/IVA (sin sufijo)
             
         Returns:
             String con el número de documento formateado
@@ -372,11 +374,12 @@ class NovohitTransformer:
             else:
                 prefix = "DOC"
         
-        # Si tenemos tipo de transacción (TDC/TDD/TDCA), agregar sufijo al prefijo
-        logger.info(f"  [DEBUG] Generando documento: operacion={operacion_nombre}, prefix={prefix}, tipo_transaccion={tipo_transaccion}")
-        if tipo_transaccion:
+        # Solo agregar sufijo DC/DD/DCA si es DEPOSITO
+        # Las comisiones e IVA no llevan sufijo en el número de documento
+        logger.info(f"  [DEBUG] Generando documento: operacion={operacion_nombre}, prefix={prefix}, tipo_transaccion={tipo_transaccion}, es_deposito={es_deposito}")
+        if es_deposito and tipo_transaccion:
             tipo_suffix = self._get_tipo_transaccion_suffix(tipo_transaccion)
-            logger.info(f"  [DEBUG] Sufijo generado: {tipo_suffix}")
+            logger.info(f"  [DEBUG] Sufijo generado (solo para depósitos): {tipo_suffix}")
             if tipo_suffix:
                 prefix = f"{prefix}{tipo_suffix}"
         
